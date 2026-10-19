@@ -23,7 +23,7 @@ import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
 import my.app.microbucketj.utils.Hashing;
 
-class ApiAcquireHandlerIntegrationTest {
+class ApiMainHandlerIntegrationTest {
 
     @Test
     void acquireHashReturnsAllowedResponse() {
@@ -34,7 +34,7 @@ class ApiAcquireHandlerIntegrationTest {
         TokenPeerClient tokenPeers = newTokenPeers();
         ClusterPeerClient clusterPeers = newClusterPeers();
         ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-        EmbeddedChannel channel = new EmbeddedChannel(new ApiAcquireHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
+        EmbeddedChannel channel = new EmbeddedChannel(new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
         try {
             long bucketHash = buckets.get(spec.name()).bucketKey();
             channel.writeInbound(apiAcquireHashRequest(101, 1, bucketHash));
@@ -61,7 +61,7 @@ class ApiAcquireHandlerIntegrationTest {
         TokenPeerClient tokenPeers = newTokenPeers();
         ClusterPeerClient clusterPeers = newClusterPeers();
         ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-        EmbeddedChannel channel = new EmbeddedChannel(new ApiAcquireHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
+        EmbeddedChannel channel = new EmbeddedChannel(new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
         try {
             byte[] missing = "missing".getBytes(StandardCharsets.UTF_8);
             long bucketHash = Hashing.fnv1a64(missing, 0, missing.length);
@@ -89,7 +89,7 @@ class ApiAcquireHandlerIntegrationTest {
         TokenPeerClient tokenPeers = newTokenPeers();
         ClusterPeerClient clusterPeers = newClusterPeers();
         ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-        EmbeddedChannel channel = new EmbeddedChannel(new ApiAcquireHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
+        EmbeddedChannel channel = new EmbeddedChannel(new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication));
         try {
             long bucketHash = buckets.get(spec.name()).bucketKey();
             channel.writeInbound(apiReportHashRequest(103, true, bucketHash));

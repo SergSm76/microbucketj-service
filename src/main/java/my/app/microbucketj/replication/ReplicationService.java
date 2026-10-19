@@ -1,5 +1,6 @@
 package my.app.microbucketj.replication;
 
+import my.app.microbucketj.api.model.LockEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import my.app.microbucketj.bucket.AbstractBucketRuntime;
@@ -15,6 +16,7 @@ import my.app.microbucketj.token.TokenPeerClient;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -112,6 +114,64 @@ public final class ReplicationService implements AutoCloseable {
     BucketState state = runtime.snapshot();
     return Replication.replicatePutUntilQuorum(tokenPeers, plan.targets(), epoch, state, need, ackTimeoutMs)
         .handle((acks, err) -> err == null && (!strictAcks || acks >= need));
+  }
+
+  /**
+   * Репликация lock-мутации (acquire/release/update/delete) с ожиданием MIN_ACKS.
+   *
+   * @param view текущий вид кластера
+   * @param epoch epoch кластера
+   * @param lockHash hash имени блокировки
+   * @param entry новая запись (null для delete)
+   * @param deleted true если операция — удаление
+   * @return CompletionStage с результатом репликации (true если достигнуто MIN_ACKS)
+   */
+  public CompletableFuture<Boolean> replicateLockMutation(ClusterView view, int epoch, long lockHash,
+                                                          LockEntry entry, boolean deleted) {
+    if (mode == ReplicationMode.DISABLED) return CF_TRUE;
+    if (view == null) return CF_FALSE;
+
+    Node self = view.self();
+    Node primary = view.pickPrimary(lockHash);
+    if (!primary.id().equals(self.id())) return CF_FALSE;
+
+    List<Node> replicas = view.pickReplicas(lockHash);
+    boolean hasFollowers = hasFollowers(view, replicas);
+    if (!hasFollowers) return CF_TRUE;
+
+    if (mode == ReplicationMode.BATCH) {
+      // Для locks batch-режим не используем — всегда immediate replication
+      return replicateLockImmediate(view, replicas, epoch, lockHash, entry, deleted);
+    }
+
+    return replicateLockImmediate(view, replicas, epoch, lockHash, entry, deleted);
+  }
+
+  private CompletableFuture<Boolean> replicateLockImmediate(ClusterView view, List<Node> replicas,
+                                                            int epoch, long lockHash,
+                                                            LockEntry entry, boolean deleted) {
+    Replication.Plan plan = Replication.plan(view, replicas, tokenPeers, quorumMode, minAcks);
+    int need = plan.needAcks();
+    if (need == 0 || plan.targets().isEmpty()) return CF_TRUE;
+
+    CompletableFuture<Boolean>[] futures = new CompletableFuture[plan.targets().size()];
+    int i = 0;
+    for (Node target : plan.targets()) {
+      futures[i++] = tokenPeers.replicateLockMutation(target, epoch, lockHash, entry, deleted, ackTimeoutMs);
+    }
+
+    return CompletableFuture.allOf(futures)
+        .handle((v, err) -> {
+          if (err != null) return false;
+          int acks = 0;
+          for (CompletableFuture<TokenPeerClient.LockAck> f : futures) {
+            if (f.isDone() && !f.isCompletedExceptionally()) {
+              TokenPeerClient.LockAck ack = f.getNow(null);
+              if (ack != null && ack.ok()) acks++;
+            }
+          }
+          return acks >= need && (!strictAcks || acks >= need);
+        });
   }
 
   private void offerBatch(long bucketHash, AbstractBucketRuntime runtime) {

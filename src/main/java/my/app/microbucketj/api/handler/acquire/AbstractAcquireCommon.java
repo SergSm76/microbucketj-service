@@ -30,10 +30,10 @@ public abstract class AbstractAcquireCommon implements OpcodeHandler {
   private final ReplicationService replication;
 
   protected AbstractAcquireCommon(BooleanSupplier isLeader,
-                       MembershipRuntime membership,
-                       BucketRegistry buckets,
-                       TokenPeerClient tokenPeers,
-                       ReplicationService replication) {
+                                  MembershipRuntime membership,
+                                  BucketRegistry buckets,
+                                  TokenPeerClient tokenPeers,
+                                  ReplicationService replication) {
     this.isLeader = (isLeader == null) ? (() -> false) : isLeader;
     this.membership = Objects.requireNonNull(membership, "membership");
     this.buckets = Objects.requireNonNull(buckets, "buckets");

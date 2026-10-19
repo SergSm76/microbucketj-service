@@ -1,7 +1,7 @@
 package my.app.microbucketj.bootstrap.network;
 
 import io.netty.handler.ssl.SslContext;
-import my.app.microbucketj.api.ApiAcquireHandler;
+import my.app.microbucketj.api.ApiMainHandler;
 import my.app.microbucketj.bucket.BucketRegistry;
 import my.app.microbucketj.cluster.ClusterPeerClient;
 import my.app.microbucketj.cluster.ClusterServerHandler;
@@ -9,6 +9,7 @@ import my.app.microbucketj.cluster.LeaderLocator;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.config.Config;
 import my.app.microbucketj.internal.UnifiedInternalServerHandler;
+import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.observability.ControlHttpServer;
 import my.app.microbucketj.observability.MetricsHolder;
 import my.app.microbucketj.observability.PrometheusMetrics;
@@ -58,8 +59,8 @@ public final class NetworkBootstrap {
     DefaultServer publicServer = new DefaultServer("public",
         cfg.bindHost, cfg.publicPort, cfg.ioThreads, cfg.publicMaxFrame,
         sslContext,
-        () -> new ApiAcquireHandler(leadership::isLeader, membership, bucketRegistry, tokenPeers, clusterPeers,
-            replication)
+        () -> new ApiMainHandler(leadership::isLeader, membership, bucketRegistry, tokenPeers, clusterPeers,
+            replication, new LockRegistry())
     );
     ControlHttpServer observabilityServer = null;
     if (cfg.observabilityEnabled) {

@@ -9,10 +9,12 @@ import my.app.microbucketj.protocol.codec.api.ApiAcquireHashCodec;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
 
+import java.util.function.BooleanSupplier;
+
 import static my.app.microbucketj.protocol.ApiProtocol.MIN_ACQUIRE_HASH_REQ;
 
 public final class AcquireHashOp extends AbstractAcquireCommon {
-  public AcquireHashOp(java.util.function.BooleanSupplier isLeader,
+  public AcquireHashOp(BooleanSupplier isLeader,
                        MembershipRuntime membership,
                        BucketRegistry buckets,
                        TokenPeerClient tokenPeers,

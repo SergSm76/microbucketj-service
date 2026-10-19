@@ -4,6 +4,8 @@ public final class ApiProtocol {
 
   public static final byte CURRENT_VERSION = ProtocolVersion.CURRENT;
 
+  // Buckets (Rate Limiter)
+
   public static final byte OP_ACQUIRE_HASH = 0x06;
   public static final byte OP_ACQUIRE_NAME = 0x07;
   public static final byte OP_ACQUIRE_EASY_HASH = 0x08;
@@ -46,6 +48,31 @@ public final class ApiProtocol {
 
   public static final int RESP_GET_SIZE = 1 + 4 + 2 + 1 + 1 + (8 * 7) + (4 * 5);
   public static final int RESP_UPSERT_SIZE = 1 + 4 + 1 + 2 + 1 + 1 + (8 * 7) + (4 * 5);
+
+  // Shedlock
+
+  // ---- Distributed locks (shedlock-style) ----
+  public static final byte OP_LOCK_ACQUIRE = 0x20;  // захват блокировки
+  public static final byte OP_LOCK_RELEASE = 0x21;  // освобождение
+  public static final byte OP_LOCK_UPDATE  = 0x22;  // продление (extend)
+  public static final byte OP_LOCK_GET     = 0x23;  // чтение
+  public static final byte OP_LOCK_DELETE  = 0x24;  // административное удаление
+
+  // Новый статус: блокировка удерживается другим владельцем
+  public static final byte ST_LOCK_HELD = 10;
+
+  public static final int MAX_LOCK_NAME_BYTES  = 64;   // VARCHAR(64)
+  public static final int MAX_LOCK_OWNER_BYTES = 255;  // VARCHAR(255)
+
+  // Минимальные размеры запросов (opcode уже съеден диспетчером):
+  public static final int MIN_LOCK_GET_REQ     = 4 + 1;           // requestId + nameLen
+  public static final int MIN_LOCK_ACQUIRE_REQ = 4 + 1 + 8 + 1;   // + lockUntilMs + lockedByLen
+  public static final int MIN_LOCK_RELEASE_REQ = 4 + 1 + 1;       // + lockedByLen
+  public static final int MIN_LOCK_UPDATE_REQ  = 4 + 1 + 8 + 1;   // + lockUntilMs + lockedByLen
+
+  // Ответы:
+  public static final int RESP_LOCK_SIZE       = 1 + 4 + 8 + 8;   // status + requestId + lockUntil + lockedAt
+  public static final int RESP_LOCK_SIMPLE     = 1 + 4;           // status + requestId
 
   private ApiProtocol() {
   }

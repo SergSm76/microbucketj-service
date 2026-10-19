@@ -49,3 +49,18 @@
 * `${TRUSTSTORE_PASSWORD}` - Пароль для truststore (по умолчанию: пусто)
 * `${TRUSTSTORE_TYPE}` - Тип truststore (по умолчанию: `PKCS12`)
 
+
+Wire-форматы (по аналогии с acquire/report):
+LOCK_ACQUIRE req:  [requestId:int32][nameLen:u8][name:bytes][lockUntilMs:int64][lockedByLen:u8][lockedBy:bytes]
+LOCK_RELEASE req:  [requestId:int32][nameLen:u8][name:bytes][lockedByLen:u8][lockedBy:bytes]
+LOCK_UPDATE  req:  [requestId:int32][nameLen:u8][name:bytes][lockUntilMs:int64][lockedByLen:u8][lockedBy:bytes]
+LOCK_GET     req:  [requestId:int32][nameLen:u8][name:bytes]
+LOCK_DELETE  req:  [requestId:int32][nameLen:u8][name:bytes]
+
+LOCK resp (acquire/update/release): [status:u8][requestId:int32][lockUntilMs:int64][lockedAtMs:int64]
+LOCK resp (get):                    [status:u8][requestId:int32][lockUntilMs:int64][lockedAtMs:int64][lockedByLen:u8][lockedBy:bytes]
+LOCK resp (simple, delete):         [status:u8][requestId:int32]
+
+Статусы: ST_OK=5 — применено; ST_LOCK_HELD=10 — держится другим;
+ST_NOT_FOUND=4 — нет записи; ST_BAD_REQUEST=6; ST_UNAVAILABLE=3
+

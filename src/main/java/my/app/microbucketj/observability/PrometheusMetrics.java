@@ -37,6 +37,12 @@ public final class PrometheusMetrics {
   private final LongAdder apiBucketUpsertUnavailableTotal = new LongAdder();
   private final LongAdder apiBucketUpsertBadRequestTotal = new LongAdder();
 
+  private final LongAdder apiLockAcquireTotal = new LongAdder();
+  private final LongAdder apiLockAcquireOkTotal = new LongAdder();
+  private final LongAdder apiLockAcquireRedirectTotal = new LongAdder();
+  private final LongAdder apiLockAcquireUnavailableTotal = new LongAdder();
+  private final LongAdder apiLockAcquireBadRequestTotal = new LongAdder();
+
   public PrometheusMetrics(String nodeId,
                            IntSupplier bucketCountSupplier,
                            IntSupplier clusterNodeCountSupplier,
@@ -111,6 +117,23 @@ public final class PrometheusMetrics {
       default -> throw new IllegalArgumentException("Unknown BucketUpsert status: " + status);
     }
   }
+
+  // locks_acquire_total{status}, locks_release_total{status}, locks_update_total{status},
+  // locks_get_total{status}, locks_delete_total{status}, locks_active (gauge = registry.size())
+  public void recordLockAcquire(byte status) {
+    apiLockAcquireTotal.increment();
+    switch (status) {
+      case 5 -> apiLockAcquireOkTotal.increment();
+      case 10 -> apiBucketUpsertRedirectTotal.increment();
+      case 3 -> apiBucketUpsertUnavailableTotal.increment();
+      case 6 -> apiBucketUpsertBadRequestTotal.increment();
+      default -> throw new IllegalArgumentException("Unknown BucketUpsert status: " + status);
+    }
+  }
+  public void recordLockRelease(byte status) { ... }
+  public void recordLockUpdate(byte status)  { ... }
+  public void recordLockGet(byte status)     { ... }
+  public void recordLockDelete(byte status)  { ... }
 
   public String render() {
     StringBuilder sb = new StringBuilder(4096);
