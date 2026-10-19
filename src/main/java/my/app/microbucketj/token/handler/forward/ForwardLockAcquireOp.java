@@ -7,12 +7,16 @@ import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
 import my.app.microbucketj.protocol.codec.token.TokenForwardLockCodec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Forward LOCK_ACQUIRE — пришёл по internal-каналу от другого узла,
  * нужно выполнить на этом узле (он является или должен являться primary).
  */
 public final class ForwardLockAcquireOp extends AbstractForwardLockCommon implements OpcodeHandler {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ForwardLockAcquireOp.class);
 
   public ForwardLockAcquireOp(LockExecutor executor) {
     super(executor);
@@ -27,6 +31,9 @@ public final class ForwardLockAcquireOp extends AbstractForwardLockCommon implem
   public void handle(ChannelHandlerContext ctx, ByteBuf in) {
     TokenForwardLockCodec.LockForwardRequest req = TokenForwardLockCodec.readLockAcquireRequest(in);
     if (req == null) return;
+
+    LOG.debug("Получен перенаправленный LOCK_ACQUIRE: reqId={} name={} owner={}",
+        req.requestId(), req.lockName(), req.lockedBy());
 
     executeAndRespond(ctx, req.requestId(), req.lockName(),
         locks -> locks.acquire(req.lockName(), req.lockUntilMs(), req.lockedBy()),

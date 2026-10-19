@@ -8,6 +8,8 @@ import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
 import my.app.microbucketj.protocol.codec.token.TokenForwardLockCodec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 
@@ -16,6 +18,8 @@ import java.util.Objects;
  * Не реплицируем, не делаем роутинг — просто читаем и отвечаем.
  */
 public final class ForwardLockGetOp implements OpcodeHandler {
+
+  private static final Logger LOG = LoggerFactory.getLogger(ForwardLockGetOp.class);
 
   private final LockExecutor executor;
 
@@ -32,6 +36,8 @@ public final class ForwardLockGetOp implements OpcodeHandler {
   public void handle(ChannelHandlerContext ctx, ByteBuf in) {
     TokenForwardLockCodec.LockForwardRequest req = TokenForwardLockCodec.readLockGetForwardRequest(in);
     if (req == null) return;
+
+    LOG.debug("Получен перенаправленный LOCK_GET_FWD: reqId={} name={}", req.requestId(), req.lockName());
 
     if (req.lockName() == null || req.lockName().isBlank()) {
       TokenForwardLockCodec.writeLockGetForwardResponse(ctx, req.requestId(),

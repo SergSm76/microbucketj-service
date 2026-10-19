@@ -5,19 +5,23 @@ import my.app.microbucketj.api.model.LockEntry;
 import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.codec.token.TokenForwardLockCodec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 
 /**
  * Базовый класс для forward lock-опов (полученных по internal-каналу от другого узла).
- *
+ * <p>
  * Логика: запрос уже пришёл на этот узел (он является или должен являться primary
  * для данной блокировки). Задача — выполнить операцию локально, реплицировать
  * и отправить ответ через internal-канал.
- *
+ * <p>
  * Наследники реализуют {@code opcode()} и {@code handle()} из OpcodeHandler.
  */
 public abstract class AbstractForwardLockCommon {
+
+  private static final Logger LOG = LoggerFactory.getLogger(AbstractForwardLockCommon.class);
 
   protected final LockExecutor executor;
 
@@ -47,16 +51,19 @@ public abstract class AbstractForwardLockCommon {
     }
 
     executor.executeOnPrimary(lockName, op, successStatus, deleted)
-        .whenComplete((r, err) -> ctx.executor().execute(() -> {
+        .whenComplete((res, err) -> ctx.executor().execute(() -> {
           if (err != null) {
+            LOG.debug("Ошибка выполнения перенаправленного запроса: reqId={} lock={} error={}", requestId, lockName, err.getMessage());
             writeFwdResp(ctx, ApiProtocol.ST_UNAVAILABLE, requestId, null);
             return;
           }
-          writeFwdResp(ctx, r.status(), requestId, r.current());
+          writeFwdResp(ctx, res.status(), requestId, res.current());
         }));
   }
 
-  /** Отправляет ответ через internal-канал (с фреймингом). */
+  /**
+   * Отправляет ответ через internal-канал (с фреймингом).
+   */
   protected void writeFwdResp(ChannelHandlerContext ctx, byte status, int requestId, LockEntry entry) {
     TokenForwardLockCodec.writeFramedResponse(ctx, requestId, status, entry);
   }

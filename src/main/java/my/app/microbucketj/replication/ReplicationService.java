@@ -151,7 +151,6 @@ public final class ReplicationService implements AutoCloseable {
     int need = plan.needAcks();
     if (need == 0 || plan.targets().isEmpty()) return CF_TRUE;
 
-    // ИСПРАВЛЕНИЕ: тип массива теперь CompletableFuture<TokenPeerClient.LockAck>[]
     @SuppressWarnings("unchecked")
     CompletableFuture<TokenPeerClient.LockAck>[] futures = new CompletableFuture[plan.targets().size()];
 

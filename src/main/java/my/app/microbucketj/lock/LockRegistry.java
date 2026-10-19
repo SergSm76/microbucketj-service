@@ -67,10 +67,20 @@ public final class LockRegistry {
     // TODO заменить бесконечный цикл
     for (; ; ) {
       LockEntry cur = locks.get(name);
-      if (cur == null) return new LockResult(false, null);
-      if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) return new LockResult(false, cur);
+      if (cur == null) {
+        LOG.debug("Попытка обновить несуществующую блокировку: {}", name);
+        return new LockResult(false, null);
+      }
+      if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
+        LOG.debug("Отказ в обновлении блокировки {}: владелец={}, запрошен={}",
+            name, cur.lockedBy(), lockedBy);
+        return new LockResult(false, cur);
+      }
       LockEntry upd = new LockEntry(name, lockUntilMs, cur.lockedAtMs(), lockedBy);
-      if (locks.replace(name, cur, upd)) return new LockResult(true, upd);
+      if (locks.replace(name, cur, upd)) {
+        LOG.debug("Блокировка {} успешно обновлена до {}", name, lockUntilMs);
+        return new LockResult(true, upd);
+      }
     }
   }
 
@@ -81,10 +91,20 @@ public final class LockRegistry {
     long now = clock.getAsLong();
     // TODO заменить бесконечный цикл
     for (; ; ) {
-      LockEntry cur = locks.get(name);
-      if (cur == null) return new LockResult(false, null);
-      if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) return new LockResult(false, cur);
-      if (locks.remove(name, cur)) return new LockResult(true, cur);
+        LockEntry cur = locks.get(name);
+        if (cur == null) {
+            LOG.debug("Попытка освободить несуществующую блокировку: {}", name);
+            return new LockResult(false, null);
+        }
+        if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
+            LOG.debug("Отказ в освобождении блокировки {}: владелец={}, запрошен={}",
+                      name, cur.lockedBy(), lockedBy);
+            return new LockResult(false, cur);
+        }
+        if (locks.remove(name, cur)) {
+            LOG.debug("Блокировка {} успешно освобождена владельцем {}", name, lockedBy);
+            return new LockResult(true, cur);
+        }
     }
   }
 

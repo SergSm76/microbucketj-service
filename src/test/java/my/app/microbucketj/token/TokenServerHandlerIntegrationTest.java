@@ -31,6 +31,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TokenServerHandlerIntegrationTest {
 
@@ -345,5 +346,176 @@ class TokenServerHandlerIntegrationTest {
     TokenForwardLockCodec.writeLockReplicationRequest(in, 302, 1, 0xDEADBEEFL, "job-1", null, true);
     channel.writeInbound(in);
     assertNull(locks.get("job-1"));
+  }
+
+  // --- Интеграционные тесты на обработку форвардированных Lock-запросов ---
+
+  @Test
+  void forwardLockUpdate_applied() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of());
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry locks = new LockRegistry();
+
+    // Предварительно захватываем блокировку от имени node-A
+    locks.acquire("job-update", System.currentTimeMillis() + 60_000, "node-A");
+
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
+
+    try {
+      ByteBuf in = Unpooled.buffer(128);
+      long newUntil = System.currentTimeMillis() + 120_000;
+      // Эмулируем запрос от другого узла на продление блокировки
+      TokenForwardLockCodec.writeLockUpdateRequest(in, 711, "job-update", newUntil, "node-A");
+      channel.writeInbound(in);
+
+      ByteBuf out = channel.readOutbound();
+      assertNotNull(out);
+      try {
+        out.readInt(); // payload size
+        byte op = out.readByte();
+        assertEquals(InternalProtocol.OP_LOCK_FWD_RESP, op);
+        var resp = TokenForwardLockCodec.readForwardResponse(out);
+
+        assertEquals(ApiProtocol.ST_OK, resp.status());
+        assertEquals(711, resp.requestId());
+
+        // Проверяем, что блокировка действительно продлилась локально
+        assertTrue(locks.get("job-update").lockUntilMs() >= newUntil);
+      } finally {
+        out.release();
+      }
+    } finally {
+      closeChannel(channel);
+      replication.close();
+      tokenPeers.close();
+    }
+  }
+
+  @Test
+  void forwardLockUpdate_rejectedByOther() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of());
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry locks = new LockRegistry();
+    locks.acquire("job-update-rej", System.currentTimeMillis() + 60_000, "node-A");
+
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
+
+    try {
+      ByteBuf in = Unpooled.buffer(128);
+      // Попытка продлить блокировку от имени node-B (владелец node-A)
+      TokenForwardLockCodec.writeLockUpdateRequest(in, 712, "job-update-rej", System.currentTimeMillis() + 120_000, "node-B");
+      channel.writeInbound(in);
+
+      ByteBuf out = channel.readOutbound();
+      assertNotNull(out);
+      try {
+        out.readInt();
+        byte op = out.readByte();
+        assertEquals(InternalProtocol.OP_LOCK_FWD_RESP, op);
+        var resp = TokenForwardLockCodec.readForwardResponse(out);
+
+        // Должен отклонить с ST_LOCK_HELD, так как владелец другой
+        assertEquals(ApiProtocol.ST_LOCK_HELD, resp.status());
+        assertEquals(712, resp.requestId());
+      } finally {
+        out.release();
+      }
+    } finally {
+      closeChannel(channel);
+      replication.close();
+      tokenPeers.close();
+    }
+  }
+
+  @Test
+  void forwardLockRelease_applied() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of());
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry locks = new LockRegistry();
+    locks.acquire("job-release", System.currentTimeMillis() + 60_000, "node-A");
+
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
+
+    try {
+      ByteBuf in = Unpooled.buffer(128);
+      TokenForwardLockCodec.writeLockReleaseRequest(in, 721, "job-release", "node-A");
+      channel.writeInbound(in);
+
+      ByteBuf out = channel.readOutbound();
+      assertNotNull(out);
+      try {
+        out.readInt();
+        byte op = out.readByte();
+        assertEquals(InternalProtocol.OP_LOCK_FWD_RESP, op);
+        var resp = TokenForwardLockCodec.readForwardResponse(out);
+
+        assertEquals(ApiProtocol.ST_OK, resp.status());
+        assertEquals(721, resp.requestId());
+
+        // Запись должна быть удалена из реестра
+        assertNull(locks.get("job-release"));
+      } finally {
+        out.release();
+      }
+    } finally {
+      closeChannel(channel);
+      replication.close();
+      tokenPeers.close();
+    }
+  }
+
+  @Test
+  void forwardLockGet_found() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of());
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry locks = new LockRegistry();
+    locks.acquire("job-get", System.currentTimeMillis() + 60_000, "node-A");
+
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
+
+    try {
+      ByteBuf in = Unpooled.buffer(128);
+      TokenForwardLockCodec.writeLockGetForwardRequest(in, 731, "job-get");
+      channel.writeInbound(in);
+
+      ByteBuf out = channel.readOutbound();
+      assertNotNull(out);
+      try {
+        out.readInt(); // payload size
+        byte op = out.readByte();
+        // Для GET forward используется отдельный opcode ответа
+        assertEquals(InternalProtocol.OP_LOCK_GET_RESP, op);
+
+        var resp = TokenForwardLockCodec.readLockGetForwardResponse(out);
+        assertEquals(ApiProtocol.ST_OK, resp.status());
+        assertEquals(731, resp.requestId());
+
+        assertNotNull(resp.entry());
+        assertEquals("node-A", resp.entry().lockedBy());
+        assertEquals("job-get", resp.entry().name());
+      } finally {
+        out.release();
+      }
+    } finally {
+      closeChannel(channel);
+      replication.close();
+      tokenPeers.close();
+    }
   }
 }

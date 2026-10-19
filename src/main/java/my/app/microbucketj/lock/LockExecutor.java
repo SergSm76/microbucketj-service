@@ -6,6 +6,8 @@ import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.cluster.model.Node;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.replication.ReplicationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -22,6 +24,8 @@ import static my.app.microbucketj.utils.Hashing.fnv1a64;
  * 2. Forward-оп: всегда на primary, сразу вызывает {@link #executeOnPrimary}.
  */
 public final class LockExecutor {
+
+  private static final Logger LOG = LoggerFactory.getLogger(LockExecutor.class);
 
   private final BooleanSupplier isLeader;
   private final MembershipRuntime membership;
@@ -42,9 +46,6 @@ public final class LockExecutor {
    * Результат выполнения операции на primary.
    */
   public record Result(boolean applied, byte status, LockEntry current, boolean deleted) {
-    public Result(boolean applied, byte status, LockEntry current) {
-      this(applied, status, current, current == null);
-    }
   }
 
   /**
@@ -68,11 +69,14 @@ public final class LockExecutor {
                                                     byte successStatus,
                                                     boolean deleted) {
     long lockHash = fnv1a64(lockName);
+    LOG.debug("Запуск операции на primary: lock={} hash={} deleted={}", lockName, lockHash, deleted);
+
     var snap = membership.snapshot();
     ClusterView view = snap.view();
     Node primary = view.pickPrimary(lockHash);
 
     if (!primary.id().equals(view.self().id())) {
+      LOG.debug("Узел не является primary для лока {}: primary={}", lockName, primary.id());
       return CompletableFuture.completedFuture(
           new Result(false, ApiProtocol.ST_UNAVAILABLE, null, deleted));
     }
@@ -81,28 +85,32 @@ public final class LockExecutor {
     try {
       res = op.execute(locks);
     } catch (IllegalArgumentException e) {
+      LOG.debug("Ошибка валидации при выполнении операции для лока {}: {}", lockName, e.getMessage());
       return CompletableFuture.completedFuture(
           new Result(false, ApiProtocol.ST_BAD_REQUEST, null, deleted));
     } catch (Exception e) {
+      LOG.error("Непредвиденная ошибка при выполнении операции для лока {}", lockName, e);
       return CompletableFuture.completedFuture(
           new Result(false, ApiProtocol.ST_UNAVAILABLE, null, deleted));
     }
 
     if (!res.applied()) {
-      byte status = (res.current() == null)
-          ? ApiProtocol.ST_NOT_FOUND
-          : ApiProtocol.ST_LOCK_HELD;
+      byte status = (res.current() == null) ? ApiProtocol.ST_NOT_FOUND : ApiProtocol.ST_LOCK_HELD;
+      LOG.debug("Операция для лока {} отклонена локально: status={}", lockName, status);
       return CompletableFuture.completedFuture(new Result(false, status, res.current(), deleted));
     }
 
-    var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName,
+    LOG.debug("Операция для лока {} применена локально, запускаем репликацию", lockName);
+    CompletableFuture<Boolean> replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName,
         res.current(), deleted);
 
     final LockEntry current = res.current();
     return replF.handle((ok, err) -> {
       if (err != null || !Boolean.TRUE.equals(ok)) {
+        LOG.warn("Ошибка репликации для лока {}: {}", lockName, err != null ? err.getMessage() : "ok=false");
         return new Result(false, ApiProtocol.ST_UNAVAILABLE, current, deleted);
       }
+      LOG.debug("Репликация для лока {} завершена успешно", lockName);
       return new Result(true, successStatus, current, deleted);
     });
   }

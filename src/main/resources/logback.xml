@@ -6,7 +6,14 @@
         </encoder>
     </appender>
 
-    <root level="INFO">
+    <!-- Настройка уровня для конкретного пакета через переменную окружения -->
+    <logger name="my.app.microbucketj.lock" level="${LOCK_LOG_LEVEL:-INFO}" />
+    <logger name="my.app.microbucketj.api.handler.lock" level="${HANDLER_LOCK_LOG_LEVEL:-INFO}" />
+    <logger name="my.app.microbucketj.token.handler.forward" level="${TOKEN_HANDLER_FORWARD_LOG_LEVEL:-INFO}" />
+
+    <logger name="my.app.microbucketj.token" level="DEBUG" />
+
+    <root level="${ROOT_LOG_LEVEL:-INFO}">
         <appender-ref ref="CONSOLE"/>
     </root>
 </configuration>

@@ -22,9 +22,12 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static my.app.microbucketj.protocol.ApiProtocol.ST_LOCK_HELD;
+import static my.app.microbucketj.protocol.ApiProtocol.ST_OK;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // TODO рефакторинг
 class ApiMainHandlerIntegrationTest {
@@ -105,7 +108,7 @@ class ApiMainHandlerIntegrationTest {
       channel.writeInbound(apiReportHashRequest(103, true, bucketHash));
 
       ReportResponse response = readReportResponse(channel);
-      assertEquals(ApiProtocol.ST_OK, response.status());
+      assertEquals(ST_OK, response.status());
       assertEquals(103, response.requestId());
     } finally {
       closeChannel(channel);
@@ -274,7 +277,7 @@ class ApiMainHandlerIntegrationTest {
     try {
       channel.writeInbound(apiLockAcquireRequest(501, "job-1", System.currentTimeMillis() + 60_000, "node-A"));
       var r = readLockResponse(channel);
-      assertEquals(ApiProtocol.ST_OK, r.status());
+      assertEquals(ST_OK, r.status());
       assertEquals(501, r.requestId());
     } finally {
       closeChannel(channel); /*...*/
@@ -298,7 +301,7 @@ class ApiMainHandlerIntegrationTest {
     try {
       channel.writeInbound(apiLockAcquireRequest(502, "job-1", System.currentTimeMillis() + 60_000, "node-B"));
       var r = readLockResponse(channel);
-      assertEquals(ApiProtocol.ST_LOCK_HELD, r.status());
+      assertEquals(ST_LOCK_HELD, r.status());
     } finally {
       closeChannel(channel); /*...*/
     }
@@ -343,10 +346,169 @@ class ApiMainHandlerIntegrationTest {
     try {
       channel.writeInbound(apiLockGetRequest(504, "job-1"));
       var r = readLockGetResponse(channel);
-      assertEquals(ApiProtocol.ST_OK, r.status());
+      assertEquals(ST_OK, r.status());
       assertEquals("node-A", r.lockedBy());
     } finally {
       closeChannel(channel); /*...*/
+    }
+  }
+
+  // --- Хелперы для тестов ---
+
+  private static ByteBuf apiLockUpdateRequest(int requestId, String name, long lockUntilMs, String lockedBy) {
+    byte[] nameB = name.getBytes(UTF_8);
+    byte[] ownerB = lockedBy.getBytes(UTF_8);
+    ByteBuf in = Unpooled.buffer(1 + 4 + 1 + nameB.length + 8 + 1 + ownerB.length);
+    in.writeByte(ApiProtocol.OP_LOCK_UPDATE);
+    in.writeInt(requestId);
+    in.writeByte(nameB.length);
+    in.writeBytes(nameB);
+    in.writeLong(lockUntilMs);
+    in.writeByte(ownerB.length);
+    in.writeBytes(ownerB);
+    return in;
+  }
+
+  private static ByteBuf apiLockReleaseRequest(int requestId, String name, String lockedBy) {
+    byte[] nameB = name.getBytes(UTF_8);
+    byte[] ownerB = lockedBy.getBytes(UTF_8);
+    ByteBuf in = Unpooled.buffer(1 + 4 + 1 + nameB.length + 1 + ownerB.length);
+    in.writeByte(ApiProtocol.OP_LOCK_RELEASE);
+    in.writeInt(requestId);
+    in.writeByte(nameB.length);
+    in.writeBytes(nameB);
+    in.writeByte(ownerB.length);
+    in.writeBytes(ownerB);
+    return in;
+  }
+
+  private static ByteBuf apiLockDeleteRequest(int requestId, String name) {
+    byte[] nameB = name.getBytes(UTF_8);
+    ByteBuf in = Unpooled.buffer(1 + 4 + 1 + nameB.length);
+    in.writeByte(ApiProtocol.OP_LOCK_DELETE);
+    in.writeInt(requestId);
+    in.writeByte(nameB.length);
+    in.writeBytes(nameB);
+    return in;
+  }
+
+// --- Интеграционные тесты (добавить в конец класса ApiMainHandlerIntegrationTest) ---
+
+  @Test
+  void lockUpdate_byOwner_applied() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketSpec spec = new BucketSpec("api-bucket", 1, 2, 1, 3_600_000);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of(spec.name(), spec));
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ClusterPeerClient clusterPeers = newClusterPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry lockRegistry = new LockRegistry();
+    lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+
+    ApiMainHandler handler = new ApiMainHandler(
+        () -> true, membership, buckets, tokenPeers, clusterPeers, replication,
+        new LockExecutor(() -> true, membership, lockRegistry, replication));
+    EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+    try {
+      channel.writeInbound(apiLockUpdateRequest(601, "job-1", System.currentTimeMillis() + 120_000, "node-A"));
+      var r = readLockResponse(channel);
+      assertEquals(ST_OK, r.status());
+      assertEquals(601, r.requestId());
+
+      // Проверяем, что запись реально продлилась
+      assertTrue(lockRegistry.get("job-1").lockUntilMs() > System.currentTimeMillis() + 60_000);
+    } finally {
+      closeChannel(channel);
+      replication.close();
+    }
+  }
+
+  @Test
+  void lockUpdate_byOther_rejected() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketSpec spec = new BucketSpec("api-bucket", 1, 2, 1, 3_600_000);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of(spec.name(), spec));
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ClusterPeerClient clusterPeers = newClusterPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry lockRegistry = new LockRegistry();
+    lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+
+    ApiMainHandler handler = new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, new LockExecutor(() -> true, membership, lockRegistry, replication));
+    EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+    try {
+      channel.writeInbound(apiLockUpdateRequest(602, "job-1", System.currentTimeMillis() + 120_000, "node-B"));
+      var r = readLockResponse(channel);
+      assertEquals(ST_LOCK_HELD, r.status()); // Должен отклонить, так как владелец другой
+    } finally {
+      closeChannel(channel);
+      replication.close();
+    }
+  }
+
+  @Test
+  void lockRelease_byOwner_deletesEntry() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketSpec spec = new BucketSpec("api-bucket", 1, 2, 1, 3_600_000);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of(spec.name(), spec));
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ClusterPeerClient clusterPeers = newClusterPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry lockRegistry = new LockRegistry();
+    lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+
+    ApiMainHandler handler = new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, new LockExecutor(() -> true, membership, lockRegistry, replication));
+    EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+    try {
+      channel.writeInbound(apiLockReleaseRequest(701, "job-1", "node-A"));
+      var r = readLockResponse(channel);
+      assertEquals(ST_OK, r.status());
+
+      // Запись должна удалиться
+      assertNull(lockRegistry.get("job-1"));
+    } finally {
+      closeChannel(channel);
+      replication.close();
+    }
+  }
+
+  @Test
+  void lockDelete_admin_removesEntry() {
+    Node self = new Node("n1", "127.0.0.1", 9001);
+    BucketSpec spec = new BucketSpec("api-bucket", 1, 2, 1, 3_600_000);
+    BucketRegistry buckets = new BucketRegistry(java.util.Map.of(spec.name(), spec));
+    MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
+    TokenPeerClient tokenPeers = newTokenPeers();
+    ClusterPeerClient clusterPeers = newClusterPeers();
+    ReplicationService replication = newDisabledReplication(membership, tokenPeers);
+    LockRegistry lockRegistry = new LockRegistry();
+    lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+
+    ApiMainHandler handler = new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, new LockExecutor(() -> true, membership, lockRegistry, replication));
+    EmbeddedChannel channel = new EmbeddedChannel(handler);
+
+    try {
+      // Delete использует SimpleResponse (только status + reqId)
+      channel.writeInbound(apiLockDeleteRequest(801, "job-1"));
+      ByteBuf out = channel.readOutbound();
+      assertNotNull(out);
+
+      out.readInt(); // payload size
+      assertEquals(ST_OK, out.readByte());
+      assertEquals(801, out.readInt());
+      assertEquals(0, out.readableBytes());
+      out.release();
+
+      assertNull(lockRegistry.get("job-1"));
+    } finally {
+      closeChannel(channel);
+      replication.close();
     }
   }
 }

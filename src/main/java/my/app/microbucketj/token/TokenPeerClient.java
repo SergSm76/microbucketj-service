@@ -74,8 +74,8 @@ public final class TokenPeerClient implements AutoCloseable {
   private final ConcurrentHashMap<Integer, PendingForward> pendingForward = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Integer, PendingAck> pendingAck = new ConcurrentHashMap<>();
   private final AtomicInteger corrSeq = new AtomicInteger(1);
-  private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward = new ConcurrentHashMap<>();  
-  private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck = new ConcurrentHashMap<>();          
+  private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck = new ConcurrentHashMap<>();
 
   public TokenPeerClient(int ioThreads,
                          int maxFrameSize,
@@ -143,8 +143,7 @@ public final class TokenPeerClient implements AutoCloseable {
   /**
    * Forward LOCK_ACQUIRE на primary-узел.
    */
-  public CompletableFuture<ForwardLockResult> forwardLockAcquire(Node primary, String lockName,
-                                                                 long lockUntilMs, String lockedBy) {
+  public CompletableFuture<ForwardLockResult> forwardLockAcquire(Node primary, String lockName, long lockUntilMs, String lockedBy) {
     return forwardLockAcquire(primary, lockName, lockUntilMs, lockedBy, forwardTimeoutMs);
   }
 
@@ -168,6 +167,13 @@ public final class TokenPeerClient implements AutoCloseable {
    */
   public CompletableFuture<ForwardLockResult> forwardLockDelete(Node primary, String lockName) {
     return forwardLockDelete(primary, lockName, forwardTimeoutMs);
+  }
+
+  /**
+   * Forward LOCK_GET на primary-узел.
+   */
+  public CompletableFuture<ForwardLockResult> forwardLockGet(Node primary, String lockName) {
+    return forwardLockGet(primary, lockName, forwardTimeoutMs);
   }
 
   public void connectAll(Iterable<Node> nodes, Node self) {
@@ -380,10 +386,6 @@ public final class TokenPeerClient implements AutoCloseable {
     return fut;
   }
 
-  public CompletableFuture<ForwardLockResult> forwardLockGet(Node primary, String lockName) {
-    return forwardLockGet(primary, lockName, forwardTimeoutMs);
-  }
-
   public CompletableFuture<ForwardLockResult> forwardLockGet(Node primary, String lockName, long timeoutMs) {
     Objects.requireNonNull(primary, PRIMARY_ERR_MSG);
     if (lockName == null || lockName.isBlank()) return CompletableFuture.completedFuture(LOCK_UNAVAILABLE);
@@ -409,11 +411,17 @@ public final class TokenPeerClient implements AutoCloseable {
     ch.writeAndFlush(out).addListener((ChannelFutureListener) f -> {
       if (f.isSuccess()) return;
       PendingLockForward removed = pendingLockForward.remove(corrId);
-      if (removed != null) removed.fut.complete(LOCK_UNAVAILABLE);
+      if (removed != null) {
+        LOG.debug("writeLockForward ch.writeAndFlush");
+        removed.fut.complete(LOCK_UNAVAILABLE);
+      }
     });
     ch.eventLoop().schedule(() -> {
       PendingLockForward removed = pendingLockForward.remove(corrId);
-      if (removed != null) removed.fut.complete(LOCK_UNAVAILABLE);
+      if (removed != null) {
+        LOG.debug("writeLockForward ch.eventLoop");
+        removed.fut.complete(LOCK_UNAVAILABLE);
+      }
     }, Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
   }
 
@@ -421,18 +429,25 @@ public final class TokenPeerClient implements AutoCloseable {
    * Репликация lock-мутации на реплику (для ReplicationService).
    */
   public CompletableFuture<LockAck> replicateLockMutation(Node replica, int epoch, long lockHash,
-                                                          String lockName, // <-- ДОБАВЛЕНО
+                                                          String lockName,
                                                           LockEntry entry, boolean deleted,
                                                           long timeoutMs) {
     Objects.requireNonNull(replica, REPLICA_ERR_MSG);
 
+    LOG.debug("Запуск репликации lock-мутации: lock={} hash={} replica={} epoch={} deleted={}",
+        lockName, lockHash, replica.id(), epoch, deleted);
+
     Channel ch = channels.get(replica.clusterAddrKey());
+
     if (ch == null || !ch.isActive()) {
+      LOG.debug("Канал к реплике {} неактивен, инициируем подключение", replica.id());
       connect(replica);
       return CompletableFuture.completedFuture(new LockAck(false));
     }
 
     int corrId = corrSeq.getAndIncrement();
+    LOG.debug("Создана репликация lock-мутации: corrId={} lock={} replica={}", corrId, lockName, replica.id());
+
     CompletableFuture<LockAck> fut = new CompletableFuture<>();
     pendingLockAck.put(corrId, new PendingLockAck(ch, fut));
 
@@ -441,14 +456,23 @@ public final class TokenPeerClient implements AutoCloseable {
     TokenForwardLockCodec.writeLockReplicationRequest(out, corrId, epoch, lockHash, lockName, entry, deleted);
 
     ch.writeAndFlush(out).addListener((ChannelFutureListener) f -> {
-      if (f.isSuccess()) return;
+      if (f.isSuccess()) {
+        LOG.debug("Репликация lock-мутации успешно отправлена: corrId={} lock={}", corrId, lockName);
+        return;
+      }
+      LOG.debug("Ошибка отправки репликации lock-мутации: corrId={} lock={} cause={}",
+          corrId, lockName, f.cause() != null ? f.cause().getMessage() : "unknown");
       PendingLockAck removed = pendingLockAck.remove(corrId);
       if (removed != null) removed.fut.complete(new LockAck(false));
     });
 
     ch.eventLoop().schedule(() -> {
       PendingLockAck removed = pendingLockAck.remove(corrId);
-      if (removed != null) removed.fut.complete(new LockAck(false));
+      if (removed != null) {
+        LOG.debug("Таймаут репликации lock-мутации: corrId={} lock={} timeout={}ms",
+            corrId, lockName, timeoutMs);
+        removed.fut.complete(new LockAck(false));
+      }
     }, Math.max(1, timeoutMs), TimeUnit.MILLISECONDS);
 
     return fut;
@@ -567,7 +591,7 @@ public final class TokenPeerClient implements AutoCloseable {
     pendingAck.forEach((id, p) -> p.fut.complete(new Ack(false)));
     pendingAck.clear();
 
-    
+
     pendingLockForward.forEach((id, p) -> p.fut.complete(LOCK_UNAVAILABLE));
     pendingLockForward.clear();
 
@@ -610,18 +634,18 @@ public final class TokenPeerClient implements AutoCloseable {
   private static final class ClientHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final ConcurrentHashMap<Integer, PendingForward> pendingForward;
     private final ConcurrentHashMap<Integer, PendingAck> pendingAck;
-    private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward;  
-    private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck;          
+    private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward;
+    private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck;
 
     ClientHandler(ConcurrentHashMap<Integer, PendingForward> pendingForward,
                   ConcurrentHashMap<Integer, PendingAck> pendingAck,
-                  ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward,  
-                  ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck) {        
+                  ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward,
+                  ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck) {
       super(true);
       this.pendingForward = pendingForward;
       this.pendingAck = pendingAck;
-      this.pendingLockForward = pendingLockForward;  
-      this.pendingLockAck = pendingLockAck;          
+      this.pendingLockForward = pendingLockForward;
+      this.pendingLockAck = pendingLockAck;
     }
 
     @Override
@@ -666,6 +690,7 @@ public final class TokenPeerClient implements AutoCloseable {
       if (op == InternalProtocol.OP_LOCK_REPL_ACK) {
         int corrId = TokenForwardLockCodec.readCorrId(in);
         boolean ok = TokenForwardLockCodec.readAckOk(in);
+        LOG.debug("Получен ACK репликации lock-мутации: corrId={} ok={}", corrId, ok);
         PendingLockAck p = pendingLockAck.remove(corrId);
         if (p != null) p.fut.complete(new LockAck(ok));
         return;

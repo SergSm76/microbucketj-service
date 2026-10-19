@@ -10,7 +10,7 @@ import java.util.Arrays;
 
 /**
  * Small, fast opcode-based dispatcher.
- *
+ * <p>
  * - reads opcode byte
  * - delegates to a registered {@link OpcodeHandler}
  * - unknown opcodes are ignored by default
@@ -40,12 +40,12 @@ public abstract class AbstractOpcodeDispatcher extends SimpleChannelInboundHandl
   protected final void channelRead0(ChannelHandlerContext ctx, ByteBuf in) {
     if (in == null || !in.isReadable()) return;
     byte op = in.readByte();
-    OpcodeHandler h = table[op & 0xFF];
-    if (h == null) {
+    OpcodeHandler opcodeHandler = table[op & 0xFF];
+    if (opcodeHandler == null) {
       onUnknownOpcode(ctx, op, in);
       return;
     }
-    h.handle(ctx, in);
+    opcodeHandler.handle(ctx, in);
   }
 
   /**
