@@ -1,9 +1,11 @@
 package my.app.microbucketj.protocol.codec.token;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelHandlerContext;
 import my.app.microbucketj.api.model.LockEntry;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
+import my.app.microbucketj.protocol.codec.common.FramedResponseWriter;
 
 import java.nio.charset.StandardCharsets;
 
@@ -45,16 +47,49 @@ public final class TokenForwardLockCodec {
     writeString(out, lockName, ApiProtocol.MAX_LOCK_NAME_BYTES);
   }
 
+  // ИСПРАВЛЕНИЕ 1: Передаем lockName даже для операции удаления (когда entry = null)
   public static void writeLockReplicationRequest(ByteBuf out, int corrId, int epoch, long lockHash,
-                                                 LockEntry entry, boolean deleted) {
+                                                 String lockName, LockEntry entry, boolean deleted) {
     out.writeByte(InternalProtocol.OP_LOCK_REPL);
     out.writeInt(corrId);
     out.writeInt(epoch);
     out.writeLong(lockHash);
     out.writeByte(deleted ? 1 : 0);
+    writeString(out, lockName, ApiProtocol.MAX_LOCK_NAME_BYTES); // Всегда пишем имя
     if (!deleted && entry != null) {
       writeEntry(out, entry);
     }
+  }
+
+  // ИСПРАВЛЕНИЕ 2: Добавляем фрейминг (Length-Field) для ответов форвардинга
+  public static void writeFramedResponse(ChannelHandlerContext ctx, int requestId, byte status, LockEntry entry) {
+    int payloadSize = 1 + 4 + 1 + 1; // op + reqId + status + hasEntry
+    if (entry != null) {
+      byte[] name = entry.name().getBytes(StandardCharsets.UTF_8);
+      byte[] owner = entry.lockedBy().getBytes(StandardCharsets.UTF_8);
+      payloadSize += 1 + name.length + 8 + 8 + 1 + owner.length;
+    }
+    ByteBuf out = FramedResponseWriter.allocate(ctx, payloadSize);
+    out.writeByte(InternalProtocol.OP_LOCK_FWD_RESP);
+    out.writeInt(requestId);
+    out.writeByte(status);
+    if (entry != null) {
+      out.writeByte(1);
+      writeEntry(out, entry);
+    } else {
+      out.writeByte(0);
+    }
+    ctx.writeAndFlush(out);
+  }
+
+  // ИСПРАВЛЕНИЕ 3: Добавляем фрейминг для Ack репликации
+  public static void writeFramedReplicationAck(ChannelHandlerContext ctx, int corrId, boolean ok) {
+    int payloadSize = 1 + 4 + 1; // op + corrId + ok
+    ByteBuf out = FramedResponseWriter.allocate(ctx, payloadSize);
+    out.writeByte(InternalProtocol.OP_LOCK_REPL_ACK);
+    out.writeInt(corrId);
+    out.writeByte(ok ? 1 : 0);
+    ctx.writeAndFlush(out);
   }
 
   public static void writeForwardResponse(ByteBuf out, int requestId, byte status, LockEntry entry) {
@@ -95,17 +130,19 @@ public final class TokenForwardLockCodec {
     return in.readByte() == 1;
   }
 
+  // Обновляем чтение репликации (с учетом добавленного lockName)
   public static LockReplicationRequest readLockReplicationRequest(ByteBuf in) {
-    if (in.readableBytes() < 4 + 4 + 8 + 1) return null;
+    if (in.readableBytes() < 4 + 4 + 8 + 1 + 1) return null;
     int corrId = in.readInt();
     int epoch = in.readInt();
     long lockHash = in.readLong();
     boolean deleted = in.readByte() == 1;
+    String lockName = readString(in, ApiProtocol.MAX_LOCK_NAME_BYTES);
     LockEntry entry = null;
     if (!deleted) {
       entry = readEntry(in);
     }
-    return new LockReplicationRequest(corrId, epoch, lockHash, entry, deleted);
+    return new LockReplicationRequest(corrId, epoch, lockHash, lockName, entry, deleted);
   }
 
   public static LockForwardRequest readLockAcquireRequest(ByteBuf in) {
@@ -187,15 +224,8 @@ public final class TokenForwardLockCodec {
     }
   }
 
-  public record ForwardLockResponse(int requestId, byte status, LockEntry entry) {
-  }
-
-  public record LockReplicationRequest(int corrId, int epoch, long lockHash, LockEntry entry, boolean deleted) {
-  }
-
-  public record LockForwardRequest(int requestId, String lockName, long lockUntilMs, String lockedBy) {
-  }
-
-  public record LockDeleteRequest(int requestId, String lockName) {
-  }
+  public record ForwardLockResponse(int requestId, byte status, LockEntry entry) {}
+  public record LockReplicationRequest(int corrId, int epoch, long lockHash, String lockName, LockEntry entry, boolean deleted) {}
+  public record LockForwardRequest(int requestId, String lockName, long lockUntilMs, String lockedBy) {}
+  public record LockDeleteRequest(int requestId, String lockName) {}
 }

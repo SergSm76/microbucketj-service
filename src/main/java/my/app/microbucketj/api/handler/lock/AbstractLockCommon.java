@@ -11,6 +11,7 @@ import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.codec.api.ApiLockCodec;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
+import my.app.microbucketj.utils.Hashing;
 
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -57,7 +58,7 @@ public abstract class AbstractLockCommon implements OpcodeHandler {
       return;
     }
 
-    long lockHash = fnv1a64(lockName);
+    long lockHash = Hashing.fnv1a64(lockName);
 
     // Проверка: если узел единственный в кластере, но не лидер — unavailable
     var snap = membership.snapshot();
@@ -85,7 +86,7 @@ public abstract class AbstractLockCommon implements OpcodeHandler {
       }
 
       // Репликация с ожиданием MIN_ACKS
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, result.entry(), result.deleted());
+      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, result.entry(), result.deleted());
       if (replF.isDone()) {
         boolean ok = replF.getNow(false);
         if (!ok) {

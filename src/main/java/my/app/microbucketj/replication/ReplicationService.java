@@ -122,12 +122,13 @@ public final class ReplicationService implements AutoCloseable {
    * @param view текущий вид кластера
    * @param epoch epoch кластера
    * @param lockHash hash имени блокировки
+   * @param lockName имя блокировки (обязательно для операции delete, чтобы реплика знала, что удалять)
    * @param entry новая запись (null для delete)
    * @param deleted true если операция — удаление
    * @return CompletionStage с результатом репликации (true если достигнуто MIN_ACKS)
    */
   public CompletableFuture<Boolean> replicateLockMutation(ClusterView view, int epoch, long lockHash,
-                                                          LockEntry entry, boolean deleted) {
+                                                          String lockName, LockEntry entry, boolean deleted) {
     if (mode == ReplicationMode.DISABLED) return CF_TRUE;
     if (view == null) return CF_FALSE;
 
@@ -139,25 +140,25 @@ public final class ReplicationService implements AutoCloseable {
     boolean hasFollowers = hasFollowers(view, replicas);
     if (!hasFollowers) return CF_TRUE;
 
-    if (mode == ReplicationMode.BATCH) {
-      // Для locks batch-режим не используем — всегда immediate replication
-      return replicateLockImmediate(view, replicas, epoch, lockHash, entry, deleted);
-    }
-
-    return replicateLockImmediate(view, replicas, epoch, lockHash, entry, deleted);
+    // Для блокировок batch-режим не используем — всегда immediate replication (блокировки требуют строгости)
+    return replicateLockImmediate(view, replicas, epoch, lockHash, lockName, entry, deleted);
   }
 
   private CompletableFuture<Boolean> replicateLockImmediate(ClusterView view, List<Node> replicas,
-                                                            int epoch, long lockHash,
+                                                            int epoch, long lockHash, String lockName,
                                                             LockEntry entry, boolean deleted) {
     Replication.Plan plan = Replication.plan(view, replicas, tokenPeers, quorumMode, minAcks);
     int need = plan.needAcks();
     if (need == 0 || plan.targets().isEmpty()) return CF_TRUE;
 
-    CompletableFuture<Boolean>[] futures = new CompletableFuture[plan.targets().size()];
+    // ИСПРАВЛЕНИЕ: тип массива теперь CompletableFuture<TokenPeerClient.LockAck>[]
+    @SuppressWarnings("unchecked")
+    CompletableFuture<TokenPeerClient.LockAck>[] futures = new CompletableFuture[plan.targets().size()];
+
     int i = 0;
     for (Node target : plan.targets()) {
-      futures[i++] = tokenPeers.replicateLockMutation(target, epoch, lockHash, entry, deleted, ackTimeoutMs);
+      // Пробрасываем lockName в TokenPeerClient
+      futures[i++] = tokenPeers.replicateLockMutation(target, epoch, lockHash, lockName, entry, deleted, ackTimeoutMs);
     }
 
     return CompletableFuture.allOf(futures)

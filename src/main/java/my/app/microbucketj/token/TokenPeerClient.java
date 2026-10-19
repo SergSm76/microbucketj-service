@@ -33,6 +33,7 @@ import my.app.microbucketj.protocol.TokenProtocol;
 import my.app.microbucketj.protocol.codec.internal.InternalHelloCodec;
 import my.app.microbucketj.protocol.codec.token.TokenForwardAcquireHashCodec;
 import my.app.microbucketj.protocol.codec.token.TokenForwardAcquireNameCodec;
+import my.app.microbucketj.protocol.codec.token.TokenForwardLockCodec;
 import my.app.microbucketj.protocol.codec.token.TokenForwardReportHashCodec;
 import my.app.microbucketj.protocol.codec.token.TokenForwardReportNameCodec;
 import my.app.microbucketj.protocol.codec.token.TokenForwardResponseCodec;
@@ -396,7 +397,9 @@ public final class TokenPeerClient implements AutoCloseable {
    * Репликация lock-мутации на реплику (для ReplicationService).
    */
   public CompletableFuture<LockAck> replicateLockMutation(Node replica, int epoch, long lockHash,
-                                                          LockEntry entry, boolean deleted, long timeoutMs) {
+                                                          String lockName, // <-- ДОБАВЛЕНО
+                                                          LockEntry entry, boolean deleted,
+                                                          long timeoutMs) {
     Objects.requireNonNull(replica, REPLICA_ERR_MSG);
 
     Channel ch = channels.get(replica.clusterAddrKey());
@@ -410,7 +413,8 @@ public final class TokenPeerClient implements AutoCloseable {
     pendingLockAck.put(corrId, new PendingLockAck(ch, fut));
 
     ByteBuf out = ch.alloc().ioBuffer(256);
-    TokenForwardLockCodec.writeLockReplicationRequest(out, corrId, epoch, lockHash, entry, deleted);
+    // Вызов обновленного кодека (который теперь тоже ждет lockName)
+    TokenForwardLockCodec.writeLockReplicationRequest(out, corrId, epoch, lockHash, lockName, entry, deleted);
 
     ch.writeAndFlush(out).addListener((ChannelFutureListener) f -> {
       if (f.isSuccess()) return;

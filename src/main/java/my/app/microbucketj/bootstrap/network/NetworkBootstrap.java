@@ -32,12 +32,15 @@ public final class NetworkBootstrap {
                                             BucketRegistry bucketRegistry,
                                             ReplicationService replication) throws Exception {
 
+    // Создаем ОДИН общий реестр на узел
+    LockRegistry lockRegistry = new LockRegistry();
+
     DefaultServer internalServer = new DefaultServer("internal",
         cfg.bindHost, cfg.clusterPort, cfg.ioThreads, cfg.internalMaxFrame,
         null,
         () -> new UnifiedInternalServerHandler(
             () -> new ClusterServerHandler(leadership, membership, clusterPeers, tokenPeers, bucketRegistry, replication),
-            () -> new TokenServerHandler(membership, bucketRegistry, replication)
+            () -> new TokenServerHandler(membership, bucketRegistry, replication, lockRegistry)
         )
     );
     PrometheusMetrics metrics = new PrometheusMetrics(
@@ -60,7 +63,7 @@ public final class NetworkBootstrap {
         cfg.bindHost, cfg.publicPort, cfg.ioThreads, cfg.publicMaxFrame,
         sslContext,
         () -> new ApiMainHandler(leadership::isLeader, membership, bucketRegistry, tokenPeers, clusterPeers,
-            replication, new LockRegistry())
+            replication, lockRegistry)
     );
     ControlHttpServer observabilityServer = null;
     if (cfg.observabilityEnabled) {

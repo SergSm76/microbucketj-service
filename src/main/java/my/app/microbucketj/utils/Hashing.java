@@ -2,7 +2,12 @@ package my.app.microbucketj.utils;
 
 import io.netty.buffer.ByteBuf;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+
 public final class Hashing {
+
+  private static final long FNV_64_OFFSET_BASIS = -3750763034362895579L; // 0xcbf29ce484222325
+  private static final long FNV_64_PRIME = 1099511628211L;
 
   private Hashing() {
   }
@@ -24,6 +29,19 @@ public final class Hashing {
       h *= 0x100000001b3L;
     }
     return Hashing.mix64(h);
+  }
+
+  public static long fnv1a64(String str) {
+    if (str == null || str.isEmpty()) {
+      return 0L;
+    }
+    long hash = FNV_64_OFFSET_BASIS;
+    byte[] bytes = str.getBytes(UTF_8);
+    for (byte b : bytes) {
+      hash ^= b;
+      hash *= FNV_64_PRIME;
+    }
+    return hash;
   }
 
   // splitmix64 finalizer

@@ -6,7 +6,6 @@ import my.app.microbucketj.cluster.ClusterPeerClient;
 import my.app.microbucketj.cluster.model.ClusterView;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.cluster.model.Node;
-import my.app.microbucketj.lock.LockEntry;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.observability.MetricsHolder;
 import my.app.microbucketj.protocol.ApiProtocol;
@@ -79,7 +78,7 @@ public final class LockDeleteOp extends AbstractLockCommon {
       LOG.info("Операция lock-delete применена: lock={}", lockName);
 
       // Репликация удаления
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, null, true);
+      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, null, true);
       if (replF.isDone()) {
         if (!replF.getNow(false)) {
           writeSimpleUnavailable(ctx, requestId);

@@ -39,9 +39,36 @@ public final class PrometheusMetrics {
 
   private final LongAdder apiLockAcquireTotal = new LongAdder();
   private final LongAdder apiLockAcquireOkTotal = new LongAdder();
-  private final LongAdder apiLockAcquireRedirectTotal = new LongAdder();
+  private final LongAdder apiLockAcquireHeldTotal = new LongAdder();
   private final LongAdder apiLockAcquireUnavailableTotal = new LongAdder();
   private final LongAdder apiLockAcquireBadRequestTotal = new LongAdder();
+  private final LongAdder apiLockAcquireNotFoundTotal = new LongAdder();
+
+  private final LongAdder apiLockReleaseTotal = new LongAdder();
+  private final LongAdder apiLockReleaseOkTotal = new LongAdder();
+  private final LongAdder apiLockReleaseHeldTotal = new LongAdder();
+  private final LongAdder apiLockReleaseUnavailableTotal = new LongAdder();
+  private final LongAdder apiLockReleaseBadRequestTotal = new LongAdder();
+  private final LongAdder apiLockReleaseNotFoundTotal = new LongAdder();
+
+  private final LongAdder apiLockUpdateTotal = new LongAdder();
+  private final LongAdder apiLockUpdateOkTotal = new LongAdder();
+  private final LongAdder apiLockUpdateHeldTotal = new LongAdder();
+  private final LongAdder apiLockUpdateUnavailableTotal = new LongAdder();
+  private final LongAdder apiLockUpdateBadRequestTotal = new LongAdder();
+  private final LongAdder apiLockUpdateNotFoundTotal = new LongAdder();
+
+  private final LongAdder apiLockDeleteTotal = new LongAdder();
+  private final LongAdder apiLockDeleteOkTotal = new LongAdder();
+  private final LongAdder apiLockDeleteUnavailableTotal = new LongAdder();
+  private final LongAdder apiLockDeleteBadRequestTotal = new LongAdder();
+  private final LongAdder apiLockDeleteNotFoundTotal = new LongAdder();
+
+  private final LongAdder apiLockGetTotal = new LongAdder();
+  private final LongAdder apiLockGetOkTotal = new LongAdder();
+  private final LongAdder apiLockGetNotFoundTotal = new LongAdder();
+  private final LongAdder apiLockGetBadRequestTotal = new LongAdder();
+
 
   public PrometheusMetrics(String nodeId,
                            IntSupplier bucketCountSupplier,
@@ -118,22 +145,58 @@ public final class PrometheusMetrics {
     }
   }
 
-  // locks_acquire_total{status}, locks_release_total{status}, locks_update_total{status},
-  // locks_get_total{status}, locks_delete_total{status}, locks_active (gauge = registry.size())
+  // ИСПРАВЛЕННЫЕ МЕТОДЫ
   public void recordLockAcquire(byte status) {
     apiLockAcquireTotal.increment();
     switch (status) {
       case 5 -> apiLockAcquireOkTotal.increment();
-      case 10 -> apiBucketUpsertRedirectTotal.increment();
-      case 3 -> apiBucketUpsertUnavailableTotal.increment();
-      case 6 -> apiBucketUpsertBadRequestTotal.increment();
-      default -> throw new IllegalArgumentException("Unknown BucketUpsert status: " + status);
+      case 10 -> apiLockAcquireHeldTotal.increment(); // ST_LOCK_HELD
+      case 3 -> apiLockAcquireUnavailableTotal.increment();
+      case 6 -> apiLockAcquireBadRequestTotal.increment();
+      case 4 -> apiLockAcquireNotFoundTotal.increment();
     }
   }
-  public void recordLockRelease(byte status) { ... }
-  public void recordLockUpdate(byte status)  { ... }
-  public void recordLockGet(byte status)     { ... }
-  public void recordLockDelete(byte status)  { ... }
+
+  public void recordLockRelease(byte status) {
+    apiLockReleaseTotal.increment();
+    switch (status) {
+      case 5 -> apiLockReleaseOkTotal.increment();
+      case 10 -> apiLockReleaseHeldTotal.increment();
+      case 3 -> apiLockReleaseUnavailableTotal.increment();
+      case 6 -> apiLockReleaseBadRequestTotal.increment();
+      case 4 -> apiLockReleaseNotFoundTotal.increment();
+    }
+  }
+
+  public void recordLockUpdate(byte status) {
+    apiLockUpdateTotal.increment();
+    switch (status) {
+      case 5 -> apiLockUpdateOkTotal.increment();
+      case 10 -> apiLockUpdateHeldTotal.increment();
+      case 3 -> apiLockUpdateUnavailableTotal.increment();
+      case 6 -> apiLockUpdateBadRequestTotal.increment();
+      case 4 -> apiLockUpdateNotFoundTotal.increment();
+    }
+  }
+
+  public void recordLockDelete(byte status) {
+    apiLockDeleteTotal.increment();
+    switch (status) {
+      case 5 -> apiLockDeleteOkTotal.increment();
+      case 3 -> apiLockDeleteUnavailableTotal.increment();
+      case 6 -> apiLockDeleteBadRequestTotal.increment();
+      case 4 -> apiLockDeleteNotFoundTotal.increment();
+    }
+  }
+
+  public void recordLockGet(byte status) {
+    apiLockGetTotal.increment();
+    switch (status) {
+      case 5 -> apiLockGetOkTotal.increment();
+      case 4 -> apiLockGetNotFoundTotal.increment();
+      case 6 -> apiLockGetBadRequestTotal.increment();
+    }
+  }
 
   public String render() {
     StringBuilder sb = new StringBuilder(4096);
@@ -176,6 +239,10 @@ public final class PrometheusMetrics {
     counter(sb, "microbucketj_api_bucket_upsert_redirect_total", apiBucketUpsertRedirectTotal.sum());
     counter(sb, "microbucketj_api_bucket_upsert_unavailable_total", apiBucketUpsertUnavailableTotal.sum());
     counter(sb, "microbucketj_api_bucket_upsert_bad_request_total", apiBucketUpsertBadRequestTotal.sum());
+
+    // TODO
+    counter(sb, "microbucketj_api_lock_acquire_total", apiLockAcquireTotal.sum());
+    // ... и так далее для release, update, delete, get
 
     line(sb, "# HELP microbucketj_node_info Static node info");
     line(sb, "# TYPE microbucketj_node_info gauge");

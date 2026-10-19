@@ -6,10 +6,10 @@ import my.app.microbucketj.cluster.ClusterPeerClient;
 import my.app.microbucketj.cluster.model.ClusterView;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.cluster.model.Node;
-import my.app.microbucketj.lock.LockEntry;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.observability.MetricsHolder;
 import my.app.microbucketj.protocol.ApiProtocol;
+import my.app.microbucketj.protocol.codec.api.ApiLockCodec;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
 import org.slf4j.Logger;
@@ -92,7 +92,7 @@ public final class LockUpdateOp extends AbstractLockCommon {
       LOG.info("Операция lock-update применена: lock={} by={} until={}", lockName, lockOwner, lockUntil);
 
       // Репликация
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, res.current(), false);
+      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, res.current(), false);
       if (replF.isDone()) {
         if (!replF.getNow(false)) {
           writeUnavailable(ctx, requestId);

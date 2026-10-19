@@ -91,7 +91,7 @@ public final class LockAcquireOp extends AbstractLockCommon {
       }
 
       // Репликация
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, res.current(), false);
+      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, res.current(), false);
       if (replF.isDone()) {
         if (!replF.getNow(false)) {
           writeUnavailable(ctx, requestId);

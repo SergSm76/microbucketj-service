@@ -114,7 +114,7 @@ public final class LockReleaseOp extends AbstractLockCommon {
       LOG.info("Операция lock-release применена: lock={} by={}", lockName, lockOwner);
 
       // Репликация удаления с ожиданием MIN_ACKS
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, null, true);
+      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, null, true);
       if (replF.isDone()) {
         boolean ok = replF.getNow(false);
         if (!ok) {
