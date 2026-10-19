@@ -17,8 +17,11 @@ public final class LockRegistry {
 
   private static final Logger LOG = LoggerFactory.getLogger(LockRegistry.class);
 
-  /** applied=true — операция применена локально (нужна репликация/ответ OK). */
-  public record LockResult(boolean applied, LockEntry current) {}
+  /**
+   * applied=true — операция применена локально (нужна репликация/ответ OK).
+   */
+  public record LockResult(boolean applied, LockEntry current) {
+  }
 
   private final ConcurrentHashMap<String, LockEntry> locks = new ConcurrentHashMap<>();
   private final LongSupplier clock;
@@ -31,11 +34,14 @@ public final class LockRegistry {
     this.clock = clock;
   }
 
-  /** Захват блокировки: успешен, если записи нет или она истекла. */
+  /**
+   * Захват блокировки: успешен, если записи нет или она истекла.
+   */
   public LockResult acquire(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
     LockEntry candidate = new LockEntry(name, lockUntilMs, now, lockedBy);
-    for (;;) {
+    // TODO заменить бесконечный цикл
+    for (; ; ) {
       LockEntry cur = locks.putIfAbsent(name, candidate);
       if (cur == null) {
         LOG.debug("Операция lock-acquire применена: lock={} by={} until={}", name, lockedBy, lockUntilMs);
@@ -53,10 +59,13 @@ public final class LockRegistry {
     }
   }
 
-  /** Продление: только текущий владелец (или если блокировка уже истекла). */
+  /**
+   * Продление: только текущий владелец (или если блокировка уже истекла).
+   */
   public LockResult update(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
-    for (;;) {
+    // TODO заменить бесконечный цикл
+    for (; ; ) {
       LockEntry cur = locks.get(name);
       if (cur == null) return new LockResult(false, null);
       if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) return new LockResult(false, cur);
@@ -65,10 +74,13 @@ public final class LockRegistry {
     }
   }
 
-  /** Освобождение: только владелец (или принудительно, если истекла). */
+  /**
+   * Освобождение: только владелец (или принудительно, если истекла).
+   */
   public LockResult release(String name, String lockedBy) {
     long now = clock.getAsLong();
-    for (;;) {
+    // TODO заменить бесконечный цикл
+    for (; ; ) {
       LockEntry cur = locks.get(name);
       if (cur == null) return new LockResult(false, null);
       if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) return new LockResult(false, cur);
@@ -80,14 +92,18 @@ public final class LockRegistry {
     return locks.get(name);
   }
 
-  /** Административное удаление (аналог DELETE FROM shedlock WHERE name = ?). */
+  /**
+   * Административное удаление (аналог DELETE FROM shedlock WHERE name = ?).
+   */
   public boolean delete(String name) {
     return locks.remove(name) != null;
   }
 
-  /** Применение реплики от другого узла кластера (без re-broadcast). */
+  /**
+   * Применение реплики от другого узла кластера (без re-broadcast).
+   */
   public void applyRemote(LockEntry entry) {
-    for (;;) {
+    for (; ; ) {
       LockEntry cur = locks.get(entry.name());
       if (cur == null) {
         if (locks.putIfAbsent(entry.name(), entry) == null) return;
@@ -103,7 +119,9 @@ public final class LockRegistry {
     locks.remove(name);
   }
 
-  /** Периодическая очистка истёкших записей (аналог not-used-reset у бакетов). */
+  /**
+   * Периодическая очистка истёкших записей (аналог not-used-reset у бакетов).
+   */
   public int cleanupExpired() {
     long now = clock.getAsLong();
     int removed = 0;

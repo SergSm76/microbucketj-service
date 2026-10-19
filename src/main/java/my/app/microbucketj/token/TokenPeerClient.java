@@ -74,8 +74,8 @@ public final class TokenPeerClient implements AutoCloseable {
   private final ConcurrentHashMap<Integer, PendingForward> pendingForward = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<Integer, PendingAck> pendingAck = new ConcurrentHashMap<>();
   private final AtomicInteger corrSeq = new AtomicInteger(1);
-  private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward = new ConcurrentHashMap<>();  // <-- добавить
-  private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck = new ConcurrentHashMap<>();          // <-- добавить
+  private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward = new ConcurrentHashMap<>();  
+  private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck = new ConcurrentHashMap<>();          
 
   public TokenPeerClient(int ioThreads,
                          int maxFrameSize,
@@ -380,6 +380,30 @@ public final class TokenPeerClient implements AutoCloseable {
     return fut;
   }
 
+  public CompletableFuture<ForwardLockResult> forwardLockGet(Node primary, String lockName) {
+    return forwardLockGet(primary, lockName, forwardTimeoutMs);
+  }
+
+  public CompletableFuture<ForwardLockResult> forwardLockGet(Node primary, String lockName, long timeoutMs) {
+    Objects.requireNonNull(primary, PRIMARY_ERR_MSG);
+    if (lockName == null || lockName.isBlank()) return CompletableFuture.completedFuture(LOCK_UNAVAILABLE);
+
+    Channel ch = channels.get(primary.clusterAddrKey());
+    if (ch == null || !ch.isActive()) {
+      connect(primary);
+      return CompletableFuture.completedFuture(LOCK_UNAVAILABLE);
+    }
+
+    int corrId = corrSeq.getAndIncrement();
+    CompletableFuture<ForwardLockResult> fut = new CompletableFuture<>();
+    pendingLockForward.put(corrId, new PendingLockForward(ch, fut));
+
+    ByteBuf out = ch.alloc().ioBuffer(96);
+    TokenForwardLockCodec.writeLockGetForwardRequest(out, corrId, lockName);
+    writeLockForward(ch, corrId, fut, out, timeoutMs);
+    return fut;
+  }
+
   private void writeLockForward(Channel ch, int corrId, CompletableFuture<ForwardLockResult> fut,
                                 ByteBuf out, long timeoutMs) {
     ch.writeAndFlush(out).addListener((ChannelFutureListener) f -> {
@@ -543,7 +567,7 @@ public final class TokenPeerClient implements AutoCloseable {
     pendingAck.forEach((id, p) -> p.fut.complete(new Ack(false)));
     pendingAck.clear();
 
-    // <-- добавить
+    
     pendingLockForward.forEach((id, p) -> p.fut.complete(LOCK_UNAVAILABLE));
     pendingLockForward.clear();
 
@@ -586,18 +610,18 @@ public final class TokenPeerClient implements AutoCloseable {
   private static final class ClientHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final ConcurrentHashMap<Integer, PendingForward> pendingForward;
     private final ConcurrentHashMap<Integer, PendingAck> pendingAck;
-    private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward;  // <-- добавить
-    private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck;          // <-- добавить
+    private final ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward;  
+    private final ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck;          
 
     ClientHandler(ConcurrentHashMap<Integer, PendingForward> pendingForward,
                   ConcurrentHashMap<Integer, PendingAck> pendingAck,
-                  ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward,  // <-- добавить
-                  ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck) {        // <-- добавить
+                  ConcurrentHashMap<Integer, PendingLockForward> pendingLockForward,  
+                  ConcurrentHashMap<Integer, PendingLockAck> pendingLockAck) {        
       super(true);
       this.pendingForward = pendingForward;
       this.pendingAck = pendingAck;
-      this.pendingLockForward = pendingLockForward;  // <-- добавить
-      this.pendingLockAck = pendingLockAck;          // <-- добавить
+      this.pendingLockForward = pendingLockForward;  
+      this.pendingLockAck = pendingLockAck;          
     }
 
     @Override
@@ -628,7 +652,6 @@ public final class TokenPeerClient implements AutoCloseable {
         return;
       }
 
-      // <-- добавить обработку lock forward response
       if (op == InternalProtocol.OP_LOCK_FWD_RESP) {
         TokenForwardLockCodec.ForwardLockResponse resp = TokenForwardLockCodec.readForwardResponse(in);
         if (resp == null) return;
@@ -640,7 +663,6 @@ public final class TokenPeerClient implements AutoCloseable {
         return;
       }
 
-      // <-- добавить обработку lock replication ack
       if (op == InternalProtocol.OP_LOCK_REPL_ACK) {
         int corrId = TokenForwardLockCodec.readCorrId(in);
         boolean ok = TokenForwardLockCodec.readAckOk(in);
@@ -654,6 +676,16 @@ public final class TokenPeerClient implements AutoCloseable {
         boolean ok = TokenReplicationCodec.readAckOk(in);
         PendingAck p = pendingAck.remove(corrId);
         if (p != null) p.fut.complete(new Ack(ok));
+      }
+
+      if (op == InternalProtocol.OP_LOCK_GET_RESP) {
+        TokenForwardLockCodec.ForwardLockResponse resp = TokenForwardLockCodec.readLockGetForwardResponse(in);
+        if (resp == null) return;
+        PendingLockForward p = pendingLockForward.remove(resp.requestId());
+        if (p != null) {
+          p.fut.complete(new ForwardLockResult(resp.status(), resp.entry(),
+              resp.status() == ApiProtocol.ST_UNAVAILABLE));
+        }
       }
     }
 
@@ -691,7 +723,6 @@ public final class TokenPeerClient implements AutoCloseable {
         }
       });
 
-      // <-- добавить очистку lock futures
       pendingLockForward.forEach((id, p) -> {
         if (p.ch == ch && pendingLockForward.remove(id, p)) {
           p.fut.complete(LOCK_UNAVAILABLE);

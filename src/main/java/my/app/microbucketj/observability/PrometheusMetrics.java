@@ -11,6 +11,7 @@ public final class PrometheusMetrics {
   private final String nodeId;
   private final IntSupplier bucketCountSupplier;
   private final IntSupplier clusterNodeCountSupplier;
+  private final IntSupplier lockCountSupplier;
   private final BooleanSupplier leaderSupplier;
 
   private final LongAdder apiAcquireTotal = new LongAdder();
@@ -73,10 +74,12 @@ public final class PrometheusMetrics {
   public PrometheusMetrics(String nodeId,
                            IntSupplier bucketCountSupplier,
                            IntSupplier clusterNodeCountSupplier,
+                           IntSupplier lockCountSupplier,
                            BooleanSupplier leaderSupplier) {
     this.nodeId = sanitizeLabel(Objects.requireNonNullElse(nodeId, "unknown"));
     this.bucketCountSupplier = bucketCountSupplier == null ? () -> 0 : bucketCountSupplier;
     this.clusterNodeCountSupplier = clusterNodeCountSupplier == null ? () -> 0 : clusterNodeCountSupplier;
+    this.lockCountSupplier = lockCountSupplier == null ? () -> 0 : lockCountSupplier;
     this.leaderSupplier = leaderSupplier == null ? () -> false : leaderSupplier;
   }
 
@@ -208,6 +211,10 @@ public final class PrometheusMetrics {
     line(sb, "# TYPE microbucketj_bucket_count gauge");
     metric(sb, "microbucketj_bucket_count", bucketCountSupplier.getAsInt());
 
+    line(sb, "# HELP microbucketj_lock_count Active locks in registry on this node");
+    line(sb, "# TYPE microbucketj_lock_count gauge");
+    metric(sb, "microbucketj_lock_count", lockCountSupplier.getAsInt());
+
     line(sb, "# HELP microbucketj_cluster_nodes Current cluster nodes in membership snapshot");
     line(sb, "# TYPE microbucketj_cluster_nodes gauge");
     metric(sb, "microbucketj_cluster_nodes", clusterNodeCountSupplier.getAsInt());
@@ -240,13 +247,42 @@ public final class PrometheusMetrics {
     counter(sb, "microbucketj_api_bucket_upsert_unavailable_total", apiBucketUpsertUnavailableTotal.sum());
     counter(sb, "microbucketj_api_bucket_upsert_bad_request_total", apiBucketUpsertBadRequestTotal.sum());
 
-    // TODO
     counter(sb, "microbucketj_api_lock_acquire_total", apiLockAcquireTotal.sum());
-    // ... и так далее для release, update, delete, get
+    counter(sb, "microbucketj_api_lock_acquire_ok_total", apiLockAcquireOkTotal.sum());
+    counter(sb, "microbucketj_api_lock_acquire_held_total", apiLockAcquireHeldTotal.sum());
+    counter(sb, "microbucketj_api_lock_acquire_unavailable_total", apiLockAcquireUnavailableTotal.sum());
+    counter(sb, "microbucketj_api_lock_acquire_bad_request_total", apiLockAcquireBadRequestTotal.sum());
+    counter(sb, "microbucketj_api_lock_acquire_not_found_total", apiLockAcquireNotFoundTotal.sum());
+
+    counter(sb, "microbucketj_api_lock_release_total", apiLockReleaseTotal.sum());
+    counter(sb, "microbucketj_api_lock_release_ok_total", apiLockReleaseOkTotal.sum());
+    counter(sb, "microbucketj_api_lock_release_held_total", apiLockReleaseHeldTotal.sum());
+    counter(sb, "microbucketj_api_lock_release_unavailable_total", apiLockReleaseUnavailableTotal.sum());
+    counter(sb, "microbucketj_api_lock_release_bad_request_total", apiLockReleaseBadRequestTotal.sum());
+    counter(sb, "microbucketj_api_lock_release_not_found_total", apiLockReleaseNotFoundTotal.sum());
+
+    counter(sb, "microbucketj_api_lock_update_total", apiLockUpdateTotal.sum());
+    counter(sb, "microbucketj_api_lock_update_ok_total", apiLockUpdateOkTotal.sum());
+    counter(sb, "microbucketj_api_lock_update_held_total", apiLockUpdateHeldTotal.sum());
+    counter(sb, "microbucketj_api_lock_update_unavailable_total", apiLockUpdateUnavailableTotal.sum());
+    counter(sb, "microbucketj_api_lock_update_bad_request_total", apiLockUpdateBadRequestTotal.sum());
+    counter(sb, "microbucketj_api_lock_update_not_found_total", apiLockUpdateNotFoundTotal.sum());
+
+    counter(sb, "microbucketj_api_lock_delete_total", apiLockDeleteTotal.sum());
+    counter(sb, "microbucketj_api_lock_delete_ok_total", apiLockDeleteOkTotal.sum());
+    counter(sb, "microbucketj_api_lock_delete_unavailable_total", apiLockDeleteUnavailableTotal.sum());
+    counter(sb, "microbucketj_api_lock_delete_bad_request_total", apiLockDeleteBadRequestTotal.sum());
+    counter(sb, "microbucketj_api_lock_delete_not_found_total", apiLockDeleteNotFoundTotal.sum());
+
+    counter(sb, "microbucketj_api_lock_get_total", apiLockGetTotal.sum());
+    counter(sb, "microbucketj_api_lock_get_ok_total", apiLockGetOkTotal.sum());
+    counter(sb, "microbucketj_api_lock_get_not_found_total", apiLockGetNotFoundTotal.sum());
+    counter(sb, "microbucketj_api_lock_get_bad_request_total", apiLockGetBadRequestTotal.sum());
 
     line(sb, "# HELP microbucketj_node_info Static node info");
     line(sb, "# TYPE microbucketj_node_info gauge");
     line(sb, "microbucketj_node_info{nodeId=\"" + nodeId + "\"} 1");
+
     return sb.toString();
   }
 }

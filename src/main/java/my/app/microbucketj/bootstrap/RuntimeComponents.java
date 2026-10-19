@@ -22,7 +22,8 @@ public record RuntimeComponents(
     ReplicationService replication,
     DefaultServer internalServer,
     DefaultServer publicServer,
-    ScheduledExecutorService tick
+    ScheduledExecutorService tick,
+    ScheduledExecutorService lockCleanupExecutor
 ) implements AutoCloseable {
 
   private static final Logger LOG = LoggerFactory.getLogger(RuntimeComponents.class);
@@ -30,6 +31,11 @@ public record RuntimeComponents(
 
   @Override
   public void close() {
+    try {
+      lockCleanupExecutor.shutdownNow();
+    } catch (Exception e) {
+      LOG.warn("Не удалось остановить lock cleanup scheduler", e);
+    }
     try {
       tick.shutdownNow();
     } catch (Exception e) {

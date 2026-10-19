@@ -17,6 +17,8 @@ public final class InternalProtocol {
   public static final byte OP_LOCK_REPL = 0x54;        // Lock replication request
   public static final byte OP_LOCK_FWD_RESP = 0x55;    // Lock forward response
   public static final byte OP_LOCK_REPL_ACK = 0x56;    // Lock replication ack
+  public static final byte OP_LOCK_GET_FWD = 0x57;     // внутренний get (forward)
+  public static final byte OP_LOCK_GET_RESP = 0x58;    // ответ на get (forward)
 
   private InternalProtocol() {
   }

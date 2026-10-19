@@ -110,6 +110,34 @@ public final class TokenForwardLockCodec {
     out.writeByte(ok ? 1 : 0);
   }
 
+  public static void writeLockGetForwardRequest(ByteBuf out, int requestId, String lockName) {
+    out.writeByte(InternalProtocol.OP_LOCK_GET_FWD);
+    out.writeInt(requestId);
+    writeString(out, lockName, ApiProtocol.MAX_LOCK_NAME_BYTES);
+  }
+
+  public static void writeLockGetForwardResponse(ChannelHandlerContext ctx, int requestId,
+                                                 byte status, LockEntry entry) {
+    // payload: op(1) + reqId(4) + status(1) + hasEntry(1) [+ entry]
+    int payloadSize = 1 + 4 + 1 + 1;
+    if (entry != null) {
+      byte[] name = entry.name().getBytes(StandardCharsets.UTF_8);
+      byte[] owner = entry.lockedBy().getBytes(StandardCharsets.UTF_8);
+      payloadSize += 1 + name.length + 8 + 8 + 1 + owner.length;
+    }
+    ByteBuf out = FramedResponseWriter.allocate(ctx, payloadSize);
+    out.writeByte(InternalProtocol.OP_LOCK_GET_RESP);
+    out.writeInt(requestId);
+    out.writeByte(status);
+    if (entry != null) {
+      out.writeByte(1);
+      writeEntry(out, entry);
+    } else {
+      out.writeByte(0);
+    }
+    ctx.writeAndFlush(out);
+  }
+
   public static ForwardLockResponse readForwardResponse(ByteBuf in) {
     if (in.readableBytes() < 4 + 1 + 1) return null;
     int requestId = in.readInt();
@@ -175,6 +203,22 @@ public final class TokenForwardLockCodec {
     int requestId = in.readInt();
     String lockName = readString(in, ApiProtocol.MAX_LOCK_NAME_BYTES);
     return new LockDeleteRequest(requestId, lockName);
+  }
+
+  public static LockForwardRequest readLockGetForwardRequest(ByteBuf in) {
+    int requestId = in.readInt();
+    String lockName = readString(in, ApiProtocol.MAX_LOCK_NAME_BYTES);
+    if (lockName == null) return null;
+    return new LockForwardRequest(requestId, lockName, 0L, "");
+  }
+
+  public static ForwardLockResponse readLockGetForwardResponse(ByteBuf in) {
+    if (in.readableBytes() < 4 + 1 + 1) return null;
+    int requestId = in.readInt();
+    byte status = in.readByte();
+    byte hasEntry = in.readByte();
+    LockEntry entry = hasEntry == 1 ? readEntry(in) : null;
+    return new ForwardLockResponse(requestId, status, entry);
   }
 
   private static void writeString(ByteBuf out, String s, int maxBytes) {

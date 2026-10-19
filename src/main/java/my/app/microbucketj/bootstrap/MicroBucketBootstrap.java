@@ -32,7 +32,8 @@ public final class MicroBucketBootstrap {
         cluster.tokenPeers(),
         cluster.clusterPeers(),
         cfg.bucketRegistry,
-        bucket.replication()
+        bucket.replication(),
+        cluster.lockRegistry()
     );
 
     return new RuntimeComponents(
@@ -44,7 +45,8 @@ public final class MicroBucketBootstrap {
         bucket.replication(),
         net.internalServer(),
         net.publicServer(),
-        cluster.tick()
+        cluster.tick(),
+        cluster.lockCleanupExecutor()
     );
   }
 }

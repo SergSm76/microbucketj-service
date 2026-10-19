@@ -1,5 +1,6 @@
 package my.app.microbucketj.bootstrap.cluster;
 
+import my.app.microbucketj.lock.LockRegistry;
 import org.slf4j.Logger;
 import org.slf4j.MDC;
 import my.app.microbucketj.cluster.ClusterPeerClient;
@@ -17,13 +18,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-// TODO
 public final class ClusterBootstrap {
 
   private ClusterBootstrap() {
   }
 
   public static ClusterComponents bootstrap(Logger log, Config cfg) {
+
     SeedlessDiscovery discovery = new SeedlessDiscovery(cfg.discoveryDns, cfg.discoveryHosts, cfg.clusterPort);
 
     Node self = cfg.selfNode();
@@ -60,7 +61,6 @@ public final class ClusterBootstrap {
       t.setUncaughtExceptionHandler((th, ex) -> log.error("uncaught in {}", th.getName(), ex));
       return t;
     });
-
     tick.scheduleWithFixedDelay(() -> {
       MDC.put("nodeId", cfg.nodeId);
       try {
@@ -88,7 +88,20 @@ public final class ClusterBootstrap {
       }
     }, cfg.reconnectPeriodMs, cfg.reconnectPeriodMs, TimeUnit.MILLISECONDS);
 
-    return new ClusterComponents(discovery, membership, leadershipRuntime, tokenPeers, clusterPeers, tick);
+    // Создаем ОДИН общий реестр на узел
+    LockRegistry lockRegistry = new LockRegistry();
+
+    ScheduledExecutorService lockCleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread t = new Thread(r, "lock-cleanup-tick");
+      t.setDaemon(true);
+      t.setUncaughtExceptionHandler((th, ex) -> log.error("uncaught in {}", th.getName(), ex));
+      return t;
+    });
+    // TODO добавить в конфиг
+    lockCleanupExecutor.scheduleWithFixedDelay(lockRegistry::cleanupExpired, 1, 10, TimeUnit.MINUTES);
+
+    return new ClusterComponents(discovery, membership, leadershipRuntime, tokenPeers, clusterPeers, tick,
+        lockRegistry, lockCleanupExecutor);
   }
 
   public record ClusterComponents(
@@ -97,7 +110,9 @@ public final class ClusterBootstrap {
       LeaderLocator leadership,
       TokenPeerClient tokenPeers,
       ClusterPeerClient clusterPeers,
-      ScheduledExecutorService tick
+      ScheduledExecutorService tick,
+      LockRegistry lockRegistry,
+      ScheduledExecutorService lockCleanupExecutor
   ) {
   }
 }

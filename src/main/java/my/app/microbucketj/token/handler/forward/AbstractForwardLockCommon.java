@@ -13,6 +13,7 @@ import my.app.microbucketj.utils.Hashing;
 import java.util.Objects;
 
 public abstract class AbstractForwardLockCommon {
+
   protected final MembershipRuntime membership;
   protected final LockRegistry locks;
   protected final ReplicationService replication;

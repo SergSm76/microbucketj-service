@@ -52,7 +52,7 @@ public final class ApiMainHandler extends AbstractOpcodeDispatcher {
         new LockAcquireOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
         new LockReleaseOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
         new LockUpdateOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
-        new LockGetOp(lockRegistry),
+        new LockGetOp(isLeader, membership, lockRegistry, tokenPeers),
         new LockDeleteOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers)
     );
   }

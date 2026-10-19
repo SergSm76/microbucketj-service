@@ -11,6 +11,7 @@ import my.app.microbucketj.token.handler.forward.ForwardAcquireHashOp;
 import my.app.microbucketj.token.handler.forward.ForwardAcquireNameOp;
 import my.app.microbucketj.token.handler.forward.ForwardLockAcquireOp;
 import my.app.microbucketj.token.handler.forward.ForwardLockDeleteOp;
+import my.app.microbucketj.token.handler.forward.ForwardLockGetOp;
 import my.app.microbucketj.token.handler.forward.ForwardLockReleaseOp;
 import my.app.microbucketj.token.handler.forward.ForwardLockUpdateOp;
 import my.app.microbucketj.token.handler.forward.ForwardReportHashOp;
@@ -41,6 +42,7 @@ public final class TokenServerHandler extends AbstractOpcodeDispatcher {
         new ForwardLockReleaseOp(membership, locks, replication),
         new ForwardLockUpdateOp(membership, locks, replication),
         new ForwardLockDeleteOp(membership, locks, replication),
+        new ForwardLockGetOp(locks),
         new ReplLockOp(locks)
     );
   }

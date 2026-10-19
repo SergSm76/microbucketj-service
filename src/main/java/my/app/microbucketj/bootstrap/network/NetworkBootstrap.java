@@ -19,6 +19,9 @@ import my.app.microbucketj.token.TokenPeerClient;
 import my.app.microbucketj.token.TokenServerHandler;
 import my.app.microbucketj.utils.TlsSupport;
 
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+
 public final class NetworkBootstrap {
 
   private NetworkBootstrap() {
@@ -30,10 +33,8 @@ public final class NetworkBootstrap {
                                             TokenPeerClient tokenPeers,
                                             ClusterPeerClient clusterPeers,
                                             BucketRegistry bucketRegistry,
-                                            ReplicationService replication) throws Exception {
-
-    // Создаем ОДИН общий реестр на узел
-    LockRegistry lockRegistry = new LockRegistry();
+                                            ReplicationService replication,
+                                            LockRegistry lockRegistry) throws Exception {
 
     DefaultServer internalServer = new DefaultServer("internal",
         cfg.bindHost, cfg.clusterPort, cfg.ioThreads, cfg.internalMaxFrame,
@@ -50,6 +51,7 @@ public final class NetworkBootstrap {
           var snap = membership.snapshot();
           return snap == null || snap.nodes() == null ? 0 : snap.nodes().size();
         },
+        lockRegistry::size,
         leadership::isLeader
     );
     MetricsHolder.set(metrics);
@@ -73,7 +75,6 @@ public final class NetworkBootstrap {
         throw new IllegalStateException("Failed to start observability server on port " + cfg.observabilityPort, e);
       }
     }
-
 
     return new NetworkComponents(internalServer, publicServer, observabilityServer);
   }
