@@ -3,7 +3,7 @@ package my.app.microbucketj.token;
 import my.app.microbucketj.bucket.BucketRegistry;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.dispatch.AbstractOpcodeDispatcher;
-import my.app.microbucketj.lock.LockRegistry;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.handler.PingOp;
 import my.app.microbucketj.token.handler.PongOp;
@@ -23,10 +23,10 @@ import my.app.microbucketj.token.handler.replication.StateXferOp;
 
 public final class TokenServerHandler extends AbstractOpcodeDispatcher {
 
-  public TokenServerHandler(MembershipRuntime membership,
+  public TokenServerHandler(LockExecutor lockExecutor,
                             BucketRegistry buckets,
                             ReplicationService replication,
-                            LockRegistry locks) {
+                            MembershipRuntime membership) {
     super(
         new PingOp(),
         new PongOp(),
@@ -37,13 +37,13 @@ public final class TokenServerHandler extends AbstractOpcodeDispatcher {
         new ReplPutOp(buckets),
         new ReplPutBatchOp(buckets),
         new StateXferOp(buckets),
-        // НОВЫЕ Lock handlers
-        new ForwardLockAcquireOp(membership, locks, replication),
-        new ForwardLockReleaseOp(membership, locks, replication),
-        new ForwardLockUpdateOp(membership, locks, replication),
-        new ForwardLockDeleteOp(membership, locks, replication),
-        new ForwardLockGetOp(locks),
-        new ReplLockOp(locks)
+        // Lock-обработчики (все через единый LockExecutor)
+        new ForwardLockGetOp(lockExecutor),
+        new ForwardLockAcquireOp(lockExecutor),
+        new ForwardLockReleaseOp(lockExecutor),
+        new ForwardLockUpdateOp(lockExecutor),
+        new ForwardLockDeleteOp(lockExecutor),
+        new ReplLockOp(lockExecutor.locks())
     );
   }
 }

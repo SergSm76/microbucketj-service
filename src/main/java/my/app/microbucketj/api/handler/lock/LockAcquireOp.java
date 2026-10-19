@@ -2,39 +2,35 @@ package my.app.microbucketj.api.handler.lock;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
-import my.app.microbucketj.cluster.ClusterPeerClient;
-import my.app.microbucketj.cluster.model.ClusterView;
-import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.cluster.model.Node;
-import my.app.microbucketj.lock.LockRegistry;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.observability.MetricsHolder;
+import my.app.microbucketj.observability.PrometheusMetrics;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.codec.api.ApiLockCodec;
-import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
-import java.util.function.BooleanSupplier;
 
 import static my.app.microbucketj.protocol.ApiProtocol.MIN_LOCK_ACQUIRE_REQ;
-import static my.app.microbucketj.utils.Hashing.fnv1a64;
 
+/**
+ * LOCK_ACQUIRE — захват блокировки.
+ *
+ * Путь выполнения:
+ *   1. Если этот узел является единственным в кластере и не лидер → ST_UNAVAILABLE.
+ *   2. Если этот узел — primary для данной блокировки → выполняем локально
+ *      через {@link LockExecutor#executeOnPrimary} и реплицируем.
+ *   3. Иначе → форвардим на primary через {@link TokenPeerClient#forwardLockAcquire}.
+ */
 public final class LockAcquireOp extends AbstractLockCommon {
 
-  private static final Logger LOG = LoggerFactory.getLogger(LockAcquireOp.class);
+  private final LockExecutor executor;
+  private final TokenPeerClient tokenPeers;
 
-  private final ClusterPeerClient clusterPeers;
-
-  public LockAcquireOp(BooleanSupplier isLeader,
-                       MembershipRuntime membership,
-                       LockRegistry locks,
-                       TokenPeerClient tokenPeers,
-                       ReplicationService replication,
-                       ClusterPeerClient clusterPeers) {
-    super(isLeader, membership, locks, tokenPeers, replication);
-    this.clusterPeers = Objects.requireNonNull(clusterPeers, "clusterPeers");
+  public LockAcquireOp(LockExecutor executor, TokenPeerClient tokenPeers) {
+    this.executor = Objects.requireNonNull(executor, "executor");
+    this.tokenPeers = Objects.requireNonNull(tokenPeers, "tokenPeers");
   }
 
   @Override
@@ -51,86 +47,49 @@ public final class LockAcquireOp extends AbstractLockCommon {
     long lockUntilMs = (name == null || in.readableBytes() < 8) ? 0L : ApiLockCodec.readLockUntil(in);
     String lockedBy = (name == null) ? null : ApiLockCodec.readLockedBy(in);
 
+    // Валидация входных данных
     if (name == null || name.isBlank() || lockedBy == null || lockedBy.isBlank() || lockUntilMs <= 0) {
       writeBadRequest(ctx, requestId);
       return;
     }
 
-    final String lockName = name;
-    final long lockUntil = lockUntilMs;
-    final String lockOwner = lockedBy;
-
-    // Проверка: primary ли мы?
-    long lockHash = fnv1a64(lockName);
-    var snap = membership.snapshot();
-    if (!isLeader.getAsBoolean() && snap.nodes().size() <= 1) {
+    // Единственный узел в кластере, но не лидер → операция невозможна
+    if (executor.isSingleNodeNonLeader()) {
       writeUnavailable(ctx, requestId);
       return;
     }
 
-    ClusterView view = snap.view();
-    Node primary = view.pickPrimary(lockHash);
-
-    if (primary.id().equals(view.self().id())) {
-      // Локальное выполнение
-      LockRegistry.LockResult res;
-      try {
-        res = locks.acquire(lockName, lockUntil, lockOwner);
-      } catch (IllegalArgumentException e) {
-        writeBadRequest(ctx, requestId);
-        return;
-      }
-
-      if (!res.applied()) {
-        if (res.current() == null) {
-          writeNotFound(ctx, requestId);
-        } else {
-          writeLockHeld(ctx, requestId, res.current());
-        }
-        return;
-      }
-
-      // Репликация
-      var replF = replication.replicateLockMutation(view, snap.epoch(), lockHash, lockName, res.current(), false);
-      if (replF.isDone()) {
-        if (!replF.getNow(false)) {
-          writeUnavailable(ctx, requestId);
-        } else {
-          writeResponse(ctx, ApiProtocol.ST_OK, requestId, res.current());
-        }
-        return;
-      }
-
-      replF.whenComplete((ok, err) -> ctx.executor().execute(() -> {
-        if (err != null || !ok) {
-          writeUnavailable(ctx, requestId);
-        } else {
-          writeResponse(ctx, ApiProtocol.ST_OK, requestId, res.current());
-        }
-      }));
+    // Мы — primary: выполняем локально + реплицируем
+    if (executor.isSelfPrimary(name)) {
+      executor.executeOnPrimary(name,
+              locks -> locks.acquire(name, lockUntilMs, lockedBy),
+              ApiProtocol.ST_OK,
+              false)  // acquire записывает, а не удаляет
+          .whenComplete((r, err) -> ctx.executor().execute(() -> {
+            if (err != null) {
+              writeUnavailable(ctx, requestId);
+              return;
+            }
+            writeLockResponse(ctx, r.status(), requestId, r.current());
+          }));
       return;
     }
 
-    // Forward на primary
-    tokenPeers.forwardLockAcquire(primary, lockName, lockUntil, lockOwner)
+    // Мы не primary: форвардим на первичный узел
+    Node primary = executor.primaryFor(name);
+    tokenPeers.forwardLockAcquire(primary, name, lockUntilMs, lockedBy)
         .whenComplete((res, err) -> ctx.executor().execute(() -> {
           if (err != null || res == null || res.unavailable()) {
             writeUnavailable(ctx, requestId);
             return;
           }
-          writeResponse(ctx, res.status(), requestId, res.entry());
+          writeLockResponse(ctx, res.status(), requestId, res.entry());
         }));
   }
 
   @Override
-  protected void forwardToPrimary(ChannelHandlerContext ctx, int clientRequestId, Node primary,
-                                  String lockName, LockOperation operation, ResponseWriter responseWriter) {
-    // Не используется — реализовано inline в handle
-  }
-
-  @Override
   protected void recordMetric(byte status) {
-    var m = MetricsHolder.get();
+    PrometheusMetrics m = MetricsHolder.get();
     if (m != null) m.recordLockAcquire(status);
   }
 }

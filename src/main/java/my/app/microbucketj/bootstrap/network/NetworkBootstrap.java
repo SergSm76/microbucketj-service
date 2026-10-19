@@ -9,6 +9,7 @@ import my.app.microbucketj.cluster.LeaderLocator;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.config.Config;
 import my.app.microbucketj.internal.UnifiedInternalServerHandler;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.observability.ControlHttpServer;
 import my.app.microbucketj.observability.MetricsHolder;
@@ -18,9 +19,6 @@ import my.app.microbucketj.server.DefaultServer;
 import my.app.microbucketj.token.TokenPeerClient;
 import my.app.microbucketj.token.TokenServerHandler;
 import my.app.microbucketj.utils.TlsSupport;
-
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
 
 public final class NetworkBootstrap {
 
@@ -36,12 +34,15 @@ public final class NetworkBootstrap {
                                             ReplicationService replication,
                                             LockRegistry lockRegistry) throws Exception {
 
+    LockExecutor lockExecutor = new LockExecutor(
+        leadership::isLeader, membership, lockRegistry, replication);
+
     DefaultServer internalServer = new DefaultServer("internal",
         cfg.bindHost, cfg.clusterPort, cfg.ioThreads, cfg.internalMaxFrame,
         null,
         () -> new UnifiedInternalServerHandler(
             () -> new ClusterServerHandler(leadership, membership, clusterPeers, tokenPeers, bucketRegistry, replication),
-            () -> new TokenServerHandler(membership, bucketRegistry, replication, lockRegistry)
+            () -> new TokenServerHandler(lockExecutor, bucketRegistry, replication, membership)
         )
     );
     PrometheusMetrics metrics = new PrometheusMetrics(
@@ -65,7 +66,7 @@ public final class NetworkBootstrap {
         cfg.bindHost, cfg.publicPort, cfg.ioThreads, cfg.publicMaxFrame,
         sslContext,
         () -> new ApiMainHandler(leadership::isLeader, membership, bucketRegistry, tokenPeers, clusterPeers,
-            replication, lockRegistry)
+            replication, lockExecutor)
     );
     ControlHttpServer observabilityServer = null;
     if (cfg.observabilityEnabled) {

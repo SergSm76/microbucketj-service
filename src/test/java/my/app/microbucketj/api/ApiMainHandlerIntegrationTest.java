@@ -11,6 +11,7 @@ import my.app.microbucketj.config.BucketSpec;
 import my.app.microbucketj.config.QuorumMode;
 import my.app.microbucketj.config.ReplicationMode;
 import my.app.microbucketj.config.ReplicationSettings;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.replication.ReplicationService;
@@ -37,9 +38,9 @@ class ApiMainHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ClusterPeerClient clusterPeers = newClusterPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       long bucketHash = buckets.get(spec.name()).bucketKey();
       channel.writeInbound(apiAcquireHashRequest(101, 1, bucketHash));
@@ -66,9 +67,9 @@ class ApiMainHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ClusterPeerClient clusterPeers = newClusterPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       byte[] missing = "missing".getBytes(UTF_8);
       long bucketHash = Hashing.fnv1a64(missing, 0, missing.length);
@@ -96,9 +97,9 @@ class ApiMainHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ClusterPeerClient clusterPeers = newClusterPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       long bucketHash = buckets.get(spec.name()).bucketKey();
       channel.writeInbound(apiReportHashRequest(103, true, bucketHash));
@@ -267,9 +268,9 @@ class ApiMainHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ClusterPeerClient clusterPeers = newClusterPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       channel.writeInbound(apiLockAcquireRequest(501, "job-1", System.currentTimeMillis() + 60_000, "node-A"));
       var r = readLockResponse(channel);
@@ -291,8 +292,9 @@ class ApiMainHandlerIntegrationTest {
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
     LockRegistry lockRegistry = new LockRegistry();
     lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, lockRegistry, replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       channel.writeInbound(apiLockAcquireRequest(502, "job-1", System.currentTimeMillis() + 60_000, "node-B"));
       var r = readLockResponse(channel);
@@ -311,9 +313,9 @@ class ApiMainHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ClusterPeerClient clusterPeers = newClusterPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       channel.writeInbound(apiLockGetRequest(503, "missing"));
       var r = readLockGetResponse(channel);
@@ -335,8 +337,9 @@ class ApiMainHandlerIntegrationTest {
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
     LockRegistry lockRegistry = new LockRegistry();
     lockRegistry.acquire("job-1", System.currentTimeMillis() + 60_000, "node-A");
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, lockRegistry, replication);
     EmbeddedChannel channel = new EmbeddedChannel(
-        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockRegistry));
+        new ApiMainHandler(() -> true, membership, buckets, tokenPeers, clusterPeers, replication, lockExecutor));
     try {
       channel.writeInbound(apiLockGetRequest(504, "job-1"));
       var r = readLockGetResponse(channel);

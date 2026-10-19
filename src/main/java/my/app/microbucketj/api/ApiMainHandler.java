@@ -21,7 +21,7 @@ import my.app.microbucketj.bucket.BucketRegistry;
 import my.app.microbucketj.cluster.ClusterPeerClient;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.dispatch.AbstractOpcodeDispatcher;
-import my.app.microbucketj.lock.LockRegistry;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.protocol.codec.api.ApiResponseCodec;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
@@ -36,7 +36,7 @@ public final class ApiMainHandler extends AbstractOpcodeDispatcher {
                         TokenPeerClient tokenPeers,
                         ClusterPeerClient clusterPeers,
                         ReplicationService replication,
-                        LockRegistry lockRegistry) {
+                        LockExecutor lockExecutor) {
     super(
         new AcquireHashOp(isLeader, membership, buckets, tokenPeers, replication),
         new AcquireNameOp(isLeader, membership, buckets, tokenPeers, replication),
@@ -49,11 +49,11 @@ public final class ApiMainHandler extends AbstractOpcodeDispatcher {
         new BucketUpsertOp(membership, buckets, clusterPeers),
         new BucketGetOp(buckets),
         // Distributed locks с primary-маршрутизацией
-        new LockAcquireOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
-        new LockReleaseOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
-        new LockUpdateOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers),
-        new LockGetOp(isLeader, membership, lockRegistry, tokenPeers),
-        new LockDeleteOp(isLeader, membership, lockRegistry, tokenPeers, replication, clusterPeers)
+        new LockAcquireOp(lockExecutor, tokenPeers),
+        new LockReleaseOp(lockExecutor, tokenPeers),
+        new LockUpdateOp(lockExecutor, tokenPeers),
+        new LockGetOp(lockExecutor, tokenPeers),  // <-- здесь
+        new LockDeleteOp(lockExecutor, tokenPeers)
     );
   }
 

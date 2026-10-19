@@ -4,17 +4,23 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.ChannelHandlerContext;
 import my.app.microbucketj.api.model.LockEntry;
 import my.app.microbucketj.dispatch.OpcodeHandler;
-import my.app.microbucketj.lock.LockRegistry;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
 import my.app.microbucketj.protocol.codec.token.TokenForwardLockCodec;
 
+import java.util.Objects;
+
+/**
+ * Forward LOCK_GET — пришёл по internal-каналу, нужно прочитать локально.
+ * Не реплицируем, не делаем роутинг — просто читаем и отвечаем.
+ */
 public final class ForwardLockGetOp implements OpcodeHandler {
 
-  private final LockRegistry locks;
+  private final LockExecutor executor;
 
-  public ForwardLockGetOp(LockRegistry locks) {
-    this.locks = locks;
+  public ForwardLockGetOp(LockExecutor executor) {
+    this.executor = Objects.requireNonNull(executor, "executor");
   }
 
   @Override
@@ -24,9 +30,16 @@ public final class ForwardLockGetOp implements OpcodeHandler {
 
   @Override
   public void handle(ChannelHandlerContext ctx, ByteBuf in) {
-    var req = TokenForwardLockCodec.readLockGetForwardRequest(in);
+    TokenForwardLockCodec.LockForwardRequest req = TokenForwardLockCodec.readLockGetForwardRequest(in);
     if (req == null) return;
-    LockEntry cur = locks.get(req.lockName());
+
+    if (req.lockName() == null || req.lockName().isBlank()) {
+      TokenForwardLockCodec.writeLockGetForwardResponse(ctx, req.requestId(),
+          ApiProtocol.ST_BAD_REQUEST, null);
+      return;
+    }
+
+    LockEntry cur = executor.locks().get(req.lockName());
     if (cur == null) {
       TokenForwardLockCodec.writeLockGetForwardResponse(ctx, req.requestId(),
           ApiProtocol.ST_NOT_FOUND, null);

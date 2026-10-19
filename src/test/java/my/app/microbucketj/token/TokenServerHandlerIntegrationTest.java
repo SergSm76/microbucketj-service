@@ -14,6 +14,7 @@ import my.app.microbucketj.config.BucketType;
 import my.app.microbucketj.config.QuorumMode;
 import my.app.microbucketj.config.ReplicationMode;
 import my.app.microbucketj.config.ReplicationSettings;
+import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.protocol.ApiProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
@@ -41,8 +42,8 @@ class TokenServerHandlerIntegrationTest {
     MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, lockRegistry));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     try {
       ByteBuf in = Unpooled.buffer(1 + 4 + 8 + 8);
       TokenForwardAcquireHashCodec.writeRequest(in, 201, 1, buckets.get(spec.name()).bucketKey());
@@ -68,8 +69,8 @@ class TokenServerHandlerIntegrationTest {
     MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, lockRegistry));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     try {
       ByteBuf in = Unpooled.buffer(1 + 4 + 1 + 8);
       TokenForwardReportHashCodec.writeRequest(in, 202, true, buckets.get(spec.name()).bucketKey());
@@ -93,8 +94,8 @@ class TokenServerHandlerIntegrationTest {
     MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, lockRegistry));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     try {
       AbstractBucketRuntime runtime = buckets.get(spec.name());
       BucketState base = runtime.snapshot();
@@ -141,8 +142,8 @@ class TokenServerHandlerIntegrationTest {
     MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry lockRegistry = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, lockRegistry));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     try {
       AbstractBucketRuntime runtime = buckets.get(spec.name());
       BucketState base = runtime.snapshot();
@@ -263,8 +264,8 @@ class TokenServerHandlerIntegrationTest {
     MembershipRuntime membership = new MembershipRuntime(self.id(), 1, 1, List.of(self));
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
-    LockRegistry locks = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, locks));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, new LockRegistry(), replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     try {
       ByteBuf in = Unpooled.buffer(128);
       TokenForwardLockCodec.writeLockAcquireRequest(in, 701, "job-1",
@@ -299,11 +300,12 @@ class TokenServerHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
     LockRegistry locks = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, locks));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     ByteBuf in = Unpooled.buffer(96);
     TokenForwardLockCodec.writeLockDeleteRequest(in, 702, "job-1");
     channel.writeInbound(in);
-    // проверка: locks.get("job-1") == null
+    assertNull(locks.get("job-1"));
   }
 
   // ---- ReplLockOp ----
@@ -315,7 +317,8 @@ class TokenServerHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
     LockRegistry locks = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, locks));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     LockEntry entry = new LockEntry("job-1", 1_000_000L, 900_000L, "node-A");
     ByteBuf in = Unpooled.buffer(256);
     TokenForwardLockCodec.writeLockReplicationRequest(in, 301, 1, 0xDEADBEEFL, "job-1", entry, false);
@@ -336,7 +339,8 @@ class TokenServerHandlerIntegrationTest {
     TokenPeerClient tokenPeers = newTokenPeers();
     ReplicationService replication = newDisabledReplication(membership, tokenPeers);
     LockRegistry locks = new LockRegistry();
-    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(membership, buckets, replication, locks));
+    LockExecutor lockExecutor = new LockExecutor(() -> true, membership, locks, replication);
+    EmbeddedChannel channel = new EmbeddedChannel(new TokenServerHandler(lockExecutor, buckets, replication, membership));
     ByteBuf in = Unpooled.buffer(128);
     TokenForwardLockCodec.writeLockReplicationRequest(in, 302, 1, 0xDEADBEEFL, "job-1", null, true);
     channel.writeInbound(in);
