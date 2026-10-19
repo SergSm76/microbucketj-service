@@ -24,14 +24,12 @@ import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.concurrent.DefaultThreadFactory;
-import my.app.microbucketj.api.model.LockEntry;
 import my.app.microbucketj.cluster.model.Node;
 import my.app.microbucketj.config.BucketSpec;
 import my.app.microbucketj.protocol.ClusterProtocol;
 import my.app.microbucketj.protocol.InternalProtocol;
 import my.app.microbucketj.protocol.codec.cluster.ClusterBucketUpsertCodec;
 import my.app.microbucketj.protocol.codec.cluster.ClusterJoinCodec;
-import my.app.microbucketj.protocol.codec.cluster.ClusterLockCodec;
 import my.app.microbucketj.protocol.codec.cluster.ClusterMembershipCodec;
 import my.app.microbucketj.protocol.codec.cluster.ClusterPingPongCodec;
 import my.app.microbucketj.protocol.codec.internal.InternalHelloCodec;
@@ -104,18 +102,6 @@ public final class ClusterPeerClient implements AutoCloseable {
   private static ByteBuf buildBucketUpsertFrame(Channel channel, BucketSpec spec) {
     ByteBuf out = channel.alloc().ioBuffer(256);
     ClusterBucketUpsertCodec.writePayload(out, spec);
-    return out;
-  }
-
-  private static ByteBuf buildLockUpsertFrame(Channel channel, LockEntry entry) {
-    ByteBuf out = channel.alloc().ioBuffer(128);
-    ClusterLockCodec.writeUpsertPayload(out, entry);   // OP_LOCK_UPSERT + entry
-    return out;
-  }
-
-  private static ByteBuf buildLockDeleteFrame(Channel channel, String name) {
-    ByteBuf out = channel.alloc().ioBuffer(96);
-    ClusterLockCodec.writeDeletePayload(out, name);    // OP_LOCK_DELETE + name
     return out;
   }
 
@@ -254,62 +240,6 @@ public final class ClusterPeerClient implements AutoCloseable {
             return;
           }
           channel.writeAndFlush(buildBucketUpsertFrame(channel, spec));
-        });
-      });
-    }
-  }
-
-  public void broadcastLockUpsert(List<Node> nodes, Node self, LockEntry entry) {
-    // ... тело один-в-один как broadcastBucketUpsert, но с buildLockUpsertFrame
-    if (entry == null || entry.name() == null || entry.name().isBlank()) return;
-    for (Node node : nodes) {
-      if (node.id().equals(self.id())) continue;
-      Channel ch = channels.get(node.clusterAddrKey());
-      if (ch != null && ch.isActive()) {
-        ch.writeAndFlush(buildLockUpsertFrame(ch, entry));
-        continue;
-      }
-      bootstrap.connect(node.host(), node.clusterPort()).addListener((ChannelFutureListener) future -> {
-        if (!future.isSuccess()) return;
-        Channel channel = future.channel();
-        channels.put(node.clusterAddrKey(), channel);
-        channel.closeFuture().addListener((ChannelFutureListener) closeFuture -> channels.remove(node.clusterAddrKey(), channel));
-        ByteBuf hello = channel.alloc().ioBuffer(64);
-        InternalHelloCodec.writePayload(hello, InternalProtocol.ROLE_CLUSTER, selfId);
-        channel.writeAndFlush(hello).addListener((ChannelFutureListener) helloFuture -> {
-          if (!helloFuture.isSuccess()) {
-            channel.close();
-            return;
-          }
-          channel.writeAndFlush(buildLockUpsertFrame(channel, entry));
-        });
-      });
-    }
-  }
-
-  public void broadcastLockDelete(List<Node> nodes, Node self, String name) {
-    // ... тело один-в-один как broadcastBucketUpsert, но с buildLockDeleteFrame
-    if (name == null || name.isBlank()) return;
-    for (Node node : nodes) {
-      if (node.id().equals(self.id())) continue;
-      Channel ch = channels.get(node.clusterAddrKey());
-      if (ch != null && ch.isActive()) {
-        ch.writeAndFlush(buildLockDeleteFrame(ch, name));
-        continue;
-      }
-      bootstrap.connect(node.host(), node.clusterPort()).addListener((ChannelFutureListener) future -> {
-        if (!future.isSuccess()) return;
-        Channel channel = future.channel();
-        channels.put(node.clusterAddrKey(), channel);
-        channel.closeFuture().addListener((ChannelFutureListener) closeFuture -> channels.remove(node.clusterAddrKey(), channel));
-        ByteBuf hello = channel.alloc().ioBuffer(64);
-        InternalHelloCodec.writePayload(hello, InternalProtocol.ROLE_CLUSTER, selfId);
-        channel.writeAndFlush(hello).addListener((ChannelFutureListener) helloFuture -> {
-          if (!helloFuture.isSuccess()) {
-            channel.close();
-            return;
-          }
-          channel.writeAndFlush(buildLockDeleteFrame(channel, name));
         });
       });
     }

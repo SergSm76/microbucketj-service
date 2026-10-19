@@ -68,40 +68,4 @@ public final class ApiLockCodec {
     out.writeInt(requestId);
     ctx.writeAndFlush(out);
   }
-
-  /** Запись LockEntry в payload (для кластерного broadcast). */
-  public static void writeEntryPayload(ByteBuf out, LockEntry e) {
-    byte[] name = e.name().getBytes(StandardCharsets.UTF_8);
-    byte[] owner = e.lockedBy().getBytes(StandardCharsets.UTF_8);
-    out.writeByte(name.length);
-    out.writeBytes(name);
-    out.writeLong(e.lockUntilMs());
-    out.writeLong(e.lockedAtMs());
-    out.writeByte(owner.length);
-    out.writeBytes(owner);
-  }
-
-  public static LockEntry readEntryPayload(ByteBuf in) {
-    String name = readLimitedString(in, ApiProtocol.MAX_LOCK_NAME_BYTES);
-    if (name == null || in.readableBytes() < 16 + 1) return null;
-    long lockUntil = in.readLong();
-    long lockedAt = in.readLong();
-    String owner = readLimitedString(in, ApiProtocol.MAX_LOCK_OWNER_BYTES);
-    if (owner == null) return null;
-    try {
-      return new LockEntry(name, lockUntil, lockedAt, owner);
-    } catch (IllegalArgumentException ex) {
-      return null;
-    }
-  }
-
-  public static String readNamePayload(ByteBuf in) {
-    return readLimitedString(in, ApiProtocol.MAX_LOCK_NAME_BYTES);
-  }
-
-  public static void writeNamePayload(ByteBuf out, String name) {
-    byte[] b = name.getBytes(StandardCharsets.UTF_8);
-    out.writeByte(b.length);
-    out.writeBytes(b);
-  }
 }

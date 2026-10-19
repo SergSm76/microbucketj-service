@@ -12,9 +12,6 @@ public final class ClusterProtocol {
 
   public static final byte OP_BUCKET_UPSERT = 0x36;
 
-  public static final byte OP_LOCK_UPSERT = 0x37;  // broadcast записи блокировки
-  public static final byte OP_LOCK_DELETE = 0x38;  // broadcast удаления блокировки
-
   private ClusterProtocol() {
   }
 }

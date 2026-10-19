@@ -9,7 +9,7 @@ public final class InternalProtocol {
   public static final byte ROLE_TOKEN = 0x01;
   public static final byte ROLE_CLUSTER = 0x02;
 
-  // Lock operations (internal protocol between nodes)
+  // Lock operations (forward protocol between nodes via token-channel)
   public static final byte OP_LOCK_ACQUIRE = 0x50;
   public static final byte OP_LOCK_RELEASE = 0x51;
   public static final byte OP_LOCK_UPDATE = 0x52;
@@ -17,8 +17,8 @@ public final class InternalProtocol {
   public static final byte OP_LOCK_REPL = 0x54;        // Lock replication request
   public static final byte OP_LOCK_FWD_RESP = 0x55;    // Lock forward response
   public static final byte OP_LOCK_REPL_ACK = 0x56;    // Lock replication ack
-  public static final byte OP_LOCK_GET_FWD = 0x57;     // внутренний get (forward)
-  public static final byte OP_LOCK_GET_RESP = 0x58;    // ответ на get (forward)
+  public static final byte OP_LOCK_GET_FWD = 0x57;
+  public static final byte OP_LOCK_GET_RESP = 0x58;
 
   private InternalProtocol() {
   }
