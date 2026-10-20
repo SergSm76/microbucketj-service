@@ -143,6 +143,7 @@ public final class LockRegistry {
    * Периодическая очистка истёкших записей (аналог not-used-reset у бакетов).
    */
   public int cleanupExpired() {
+    LOG.debug("Запуск поиска истекших блокировок для очистки");
     long now = clock.getAsLong();
     int removed = 0;
     for (var it = locks.entrySet().iterator(); it.hasNext(); ) {
