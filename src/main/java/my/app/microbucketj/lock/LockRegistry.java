@@ -47,76 +47,113 @@ public final class LockRegistry {
 
   /**
    * Захват блокировки: успешен, если записи нет или она истекла.
+   * Использует атомарную операцию compute для исключения CAS-циклов.
    */
   public LockResult acquire(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
     LockEntry candidate = new LockEntry(name, lockUntilMs, now, lockedBy);
-    // TODO заменить бесконечный цикл ?
-    for (; ; ) {
-      LockEntry cur = locks.putIfAbsent(name, candidate);
-      if (cur == null) {
-        LOG.debug("Операция lock-acquire применена: lock={} by={} until={}", name, lockedBy, lockUntilMs);
-        return new LockResult(true, candidate);
+
+    // compute гарантирует атомарность для конкретного ключа
+    LockEntry result = locks.compute(name, (k, cur) -> {
+      if (cur == null || cur.isExpired(now)) {
+        return candidate; // успешный захват
       }
-      if (cur.isExpired(now)) {
-        if (locks.replace(name, cur, candidate)) {
-          LOG.debug("Операция lock-acquire перехватила истекшую блокировку: lock={} prevBy={} newBy={}",
-              name, cur.lockedBy(), lockedBy);
-          return new LockResult(true, candidate);
-        }
-        continue; // CAS-повтор
-      }
-      return new LockResult(false, cur); // блокировка держится другим владельцем
+      return cur; // блокировка удерживается другим
+    });
+
+    boolean applied = (result == candidate);
+    LockResult lockResult = new LockResult(applied, result);
+
+    if (applied) {
+      LOG.debug("Операция lock-acquire применена: lock={} by={} until={}", name, lockedBy, lockUntilMs);
+    } else {
+      LOG.debug("Блокировка {} уже держится: owner={}, until={}", name, result.lockedBy(), result.lockUntilMs());
     }
+
+    return lockResult;
   }
 
   /**
    * Продление: только текущий владелец (или если блокировка уже истекла).
+   * Использует атомарную операцию compute для исключения CAS-циклов.
    */
   public LockResult update(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
-    // TODO заменить бесконечный цикл ?
-    for (; ; ) {
-      LockEntry cur = locks.get(name);
+
+    // Массив для передачи результата из лямбды (аналог holder)
+    final LockEntry[] candidate = new LockEntry[1];
+
+    LockEntry result = locks.compute(name, (k, cur) -> {
       if (cur == null) {
-        LOG.debug("Попытка обновить несуществующую блокировку: {}", name);
-        return new LockResult(false, null);
+        return null; // не обновляем, если записи нет
       }
+      // Отказ: не владелец и блокировка ещё действует
       if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
-        LOG.debug("Отказ в обновлении блокировки {}: владелец={}, запрошен={}",
-            name, cur.lockedBy(), lockedBy);
-        return new LockResult(false, cur);
+        return cur;
       }
-      LockEntry upd = new LockEntry(name, lockUntilMs, cur.lockedAtMs(), lockedBy);
-      if (locks.replace(name, cur, upd)) {
-        LOG.debug("Блокировка {} успешно обновлена до {}", name, lockUntilMs);
-        return new LockResult(true, upd);
-      }
+      // Успешное обновление
+      candidate[0] = new LockEntry(name, lockUntilMs, cur.lockedAtMs(), lockedBy);
+      return candidate[0];
+    });
+
+    if (result == null) {
+      LOG.debug("Попытка обновить несуществующую блокировку: {}", name);
+      return new LockResult(false, null);
     }
+
+    boolean applied = (result == candidate[0]);
+    LockResult lockResult = new LockResult(applied, result);
+
+    if (applied) {
+      LOG.debug("Блокировка {} успешно обновлена до {}", name, lockUntilMs);
+    } else {
+      LOG.debug("Отказ в обновлении блокировки {}: владелец={}, запрошен={}",
+          name, result.lockedBy(), lockedBy);
+    }
+
+    return lockResult;
   }
 
   /**
    * Освобождение: только владелец (или принудительно, если истекла).
+   * Использует атомарную операцию compute для исключения CAS-циклов.
    */
   public LockResult release(String name, String lockedBy) {
     long now = clock.getAsLong();
-    // TODO заменить бесконечный цикл ?
-    for (; ; ) {
-      LockEntry cur = locks.get(name);
+
+    // Holder для передачи состояния из лямбды
+    final ReleaseHolder holder = new ReleaseHolder();
+
+    locks.compute(name, (k, cur) -> {
       if (cur == null) {
-        LOG.debug("Попытка освободить несуществующую блокировку: {}", name);
-        return new LockResult(false, null);
+        holder.wasPresent = false;
+        return null;
       }
+      holder.wasPresent = true;
+      // Отказ: не владелец и блокировка ещё действует
       if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
-        LOG.debug("Отказ в освобождении блокировки {}: владелец={}, запрошен={}",
-            name, cur.lockedBy(), lockedBy);
-        return new LockResult(false, cur);
+        holder.rejected = true;
+        holder.entry = cur;
+        return cur;
       }
-      if (locks.remove(name, cur)) {
-        LOG.debug("Блокировка {} успешно освобождена владельцем {}", name, lockedBy);
-        return new LockResult(true, cur);
-      }
+      // Успешное освобождение
+      holder.entry = cur;
+      return null; // удаляем из map
+    });
+
+    if (!holder.wasPresent) {
+      LOG.debug("Попытка освободить несуществующую блокировку: {}", name);
+      return new LockResult(false, null);
     }
+
+    if (holder.rejected) {
+      LOG.debug("Отказ в освобождении блокировки {}: владелец={}, запрошен={}",
+          name, holder.entry.lockedBy(), lockedBy);
+      return new LockResult(false, holder.entry);
+    }
+
+    LOG.debug("Блокировка {} успешно освобождена владельцем {}", name, lockedBy);
+    return new LockResult(true, holder.entry);
   }
 
   public LockEntry get(String name) {
@@ -132,19 +169,19 @@ public final class LockRegistry {
 
   /**
    * Применение реплики от другого узла кластера (без re-broadcast).
+   * Использует атомарный compute для last-writer-wins стратегии.
    */
   public void applyRemote(LockEntry entry) {
-    // TODO заменить бесконечный цикл ?
-    for (; ; ) {
-      LockEntry cur = locks.get(entry.name());
+    locks.compute(entry.name(), (k, cur) -> {
       if (cur == null) {
-        if (locks.putIfAbsent(entry.name(), entry) == null) return;
-        continue;
+        return entry; // первая запись
       }
-      // last-writer-wins по lockUntilMs/lockedAtMs, как версионирование бакетов
-      if (entry.lockedAtMs() >= cur.lockedAtMs() && locks.replace(entry.name(), cur, entry)) return;
-      return;
-    }
+      // last-writer-wins по lockedAtMs, как версионирование бакетов
+      if (entry.lockedAtMs() >= cur.lockedAtMs()) {
+        return entry; // новая запись новее
+      }
+      return cur; // оставляем текущую
+    });
   }
 
   public void removeRemote(String name) {
@@ -186,5 +223,14 @@ public final class LockRegistry {
    */
   public List<LockEntry> snapshot() {
     return new ArrayList<>(locks.values());
+  }
+
+  /**
+   * Вспомогательный класс для передачи состояния из лямбды compute().
+   */
+  private static class ReleaseHolder {
+    LockEntry entry;
+    boolean wasPresent = true;
+    boolean rejected = false;
   }
 }
