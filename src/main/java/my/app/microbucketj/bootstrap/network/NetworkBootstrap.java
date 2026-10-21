@@ -12,6 +12,7 @@ import my.app.microbucketj.internal.UnifiedInternalServerHandler;
 import my.app.microbucketj.lock.LockExecutor;
 import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.observability.ControlHttpServer;
+import my.app.microbucketj.observability.LockRegistryRenderer;
 import my.app.microbucketj.observability.MetricsHolder;
 import my.app.microbucketj.observability.PrometheusMetrics;
 import my.app.microbucketj.replication.ReplicationService;
@@ -69,9 +70,11 @@ public final class NetworkBootstrap {
             replication, lockExecutor)
     );
     ControlHttpServer observabilityServer = null;
+    LockRegistryRenderer lockRegistryRenderer = new LockRegistryRenderer(lockRegistry);
     if (cfg.observabilityEnabled) {
       try {
-        observabilityServer = new ControlHttpServer(cfg.bindHost, cfg.observabilityPort, metrics);
+        observabilityServer = new ControlHttpServer(cfg.bindHost, cfg.observabilityPort, metrics,
+            lockRegistryRenderer, cfg.locksObservabilityApiEnabled);
       } catch (Exception e) {
         throw new IllegalStateException("Failed to start observability server on port " + cfg.observabilityPort, e);
       }

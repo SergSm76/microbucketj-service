@@ -11,7 +11,6 @@ import my.app.microbucketj.dispatch.AbstractOpcodeDispatcher;
 import my.app.microbucketj.replication.ReplicationService;
 import my.app.microbucketj.token.TokenPeerClient;
 
-// TODO
 public final class ClusterServerHandler extends AbstractOpcodeDispatcher {
 
   public ClusterServerHandler(LeaderLocator leadership,

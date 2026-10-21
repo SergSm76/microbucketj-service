@@ -41,6 +41,9 @@ public final class Config {
 
   public final boolean observabilityEnabled;
   public final int observabilityPort;
+  public final boolean locksObservabilityApiEnabled;
+
+  public final long locksCleanupPeriodMinutes;
 
   public final SslConfig sslConfig;
 
@@ -64,6 +67,8 @@ public final class Config {
                  BucketRegistry bucketRegistry,
                  boolean observabilityEnabled,
                  int observabilityPort,
+                 boolean locksObservabilityApiEnabled,
+                 long locksCleanupPeriodMinutes,
                  SslConfig sslConfig) {
     this.nodeId = nodeId;
     this.bindHost = bindHost;
@@ -85,6 +90,8 @@ public final class Config {
     this.bucketRegistry = bucketRegistry;
     this.observabilityEnabled = observabilityEnabled;
     this.observabilityPort = observabilityPort;
+    this.locksObservabilityApiEnabled = locksObservabilityApiEnabled;
+    this.locksCleanupPeriodMinutes = locksCleanupPeriodMinutes;
     this.sslConfig = sslConfig;
   }
 
@@ -124,6 +131,10 @@ public final class Config {
 
     boolean observabilityEnabled = Env.getEnvBoolean("OBSERVABILITY_ENABLED", true);
     int observabilityPort = Env.getEnvInteger("OBSERVABILITY_PORT", 8083);
+    boolean locksObservabilityApiEnabled = Env.getEnvBoolean("LOCKS_OBSERVABILITY_API_ENABLED", true);
+
+    long locksCleanupPeriodMinutes = Math.min(100, Env.getEnvLong("LOCKS_CLEANUP_PERIOD_MINUTES", 10));
+
     SslConfig sslConfig = SslConfig.fromEnv();
 
     validate(nodeId, bindHost, advertiseHost,
@@ -146,6 +157,8 @@ public final class Config {
         bucketRegistry,
         observabilityEnabled,
         observabilityPort,
+        locksObservabilityApiEnabled,
+        locksCleanupPeriodMinutes,
         sslConfig
     );
   }

@@ -4,6 +4,8 @@ import my.app.microbucketj.api.model.LockEntry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 
@@ -159,5 +161,12 @@ public final class LockRegistry {
 
   public int size() {
     return locks.size();
+  }
+
+  /**
+   * Возвращает снимок текущего состояния всех блокировок.
+   */
+  public List<LockEntry> snapshot() {
+    return new ArrayList<>(locks.values());
   }
 }

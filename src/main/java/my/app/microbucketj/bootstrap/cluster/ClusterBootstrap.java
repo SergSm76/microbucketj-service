@@ -1,8 +1,5 @@
 package my.app.microbucketj.bootstrap.cluster;
 
-import my.app.microbucketj.lock.LockRegistry;
-import org.slf4j.Logger;
-import org.slf4j.MDC;
 import my.app.microbucketj.cluster.ClusterPeerClient;
 import my.app.microbucketj.cluster.LeaderLocator;
 import my.app.microbucketj.cluster.LeadershipRuntime;
@@ -11,7 +8,10 @@ import my.app.microbucketj.cluster.model.HostAndPort;
 import my.app.microbucketj.cluster.model.MembershipRuntime;
 import my.app.microbucketj.cluster.model.Node;
 import my.app.microbucketj.config.Config;
+import my.app.microbucketj.lock.LockRegistry;
 import my.app.microbucketj.token.TokenPeerClient;
+import org.slf4j.Logger;
+import org.slf4j.MDC;
 
 import java.util.List;
 import java.util.concurrent.Executors;
@@ -97,8 +97,8 @@ public final class ClusterBootstrap {
       t.setUncaughtExceptionHandler((th, ex) -> log.error("uncaught in {}", th.getName(), ex));
       return t;
     });
-    // TODO добавить в конфиг
-    lockCleanupExecutor.scheduleWithFixedDelay(lockRegistry::cleanupExpired, 1, 10, TimeUnit.MINUTES);
+    lockCleanupExecutor.scheduleWithFixedDelay(lockRegistry::cleanupExpired,
+        cfg.locksCleanupPeriodMinutes, cfg.locksCleanupPeriodMinutes, TimeUnit.MINUTES);
 
     return new ClusterComponents(discovery, membership, leadershipRuntime, tokenPeers, clusterPeers, tick,
         lockRegistry, lockCleanupExecutor);
