@@ -5,14 +5,15 @@
 ### Основные возможности
 
 - **Распределённый rate limiting** — настраиваемые бакеты с ёмкостью, скоростью пополнения и периодом (`RLS_BUCKETS`), включая ступенчатые лимиты (step-capacities).
+- **Распределённые блокировки (ShedLock)** — система взаимных исключений для кластерных задач с семантикой как у ShedLock (acquire/release/update/get/delete).
+- **Синхронная репликация блокировок** — блокировки реплицируются между узлами кластера с настраиваемым кворумом подтверждений.
 - **Кластеризация и репликация** — несколько реплик на бакет (`REPLICA_COUNT`), настраиваемое минимальное число подтверждений записи (`MIN_ACKS`), режимы кворума и репликации.
 - **Автоматическое обнаружение узлов** — через DNS (`DISCOVERY_DNS`) или статический список хостов (`DISCOVERY_HOSTS`).
 - **Отказоустойчивость** — heartbeat-мониторинг узлов, выбор лидера, повторные подключения и таймауты.
 - **Гибкое публичное API** — операции acquire/report по имени или хэшу ключа, упрощённые варианты запросов, управление бакетами (upsert/get).
-- **Наблюдаемость** — метрики Prometheus и HTTP-эндпоинты observability (`OBSERVABILITY_PORT`).
+- **Наблюдаемость** — метрики Prometheus и HTTP-эндпоинты observability (`OBSERVABILITY_PORT`), включая REST API для мониторинга блокировок.
 - **Безопасность** — поддержка TLS/mTLS для внутренней кластерной коммуникации.
 - **Конфигурация через переменные окружения** — без изменения кода.
-
 
 # Индивидуальные переменные окружения для запуска сервиса microbucketj-service
 
@@ -40,6 +41,9 @@
 * `${LEADER_HOLD_DOWN_MS}` - Время, в течение которого узел не может стать лидером после потери статуса (по умолчанию: `500`)
 * `${OBSERVABILITY_ENABLED}` - Включить/отключить метрики и мониторинг (по умолчанию: `true`)
 * `${OBSERVABILITY_PORT}` - Порт для эндпоинтов observability (по умолчанию: `8083`)
+* `${LOCKS_OBSERVABILITY_API_ENABLED}` - Включить/отключить rest api для мониторинга блокировок 
+
+* `${LOCKS_CLEANUP_PERIOD_MINUTES}` - Интервал в минутах для автоудаления протухших блокировок 
 
 * `${MTLS_ENABLED}` - Включить TLS/MTLS для внутренней коммуникации (по умолчанию: `false`)
 * `${KEYSTORE_LOCATION}` - Путь к файлу keystore для TLS (по умолчанию: пусто)
@@ -50,17 +54,41 @@
 * `${TRUSTSTORE_TYPE}` - Тип truststore (по умолчанию: `PKCS12`)
 
 
-Wire-форматы (по аналогии с acquire/report):
-LOCK_ACQUIRE req:  [requestId:int32][nameLen:u8][name:bytes][lockUntilMs:int64][lockedByLen:u8][lockedBy:bytes]
-LOCK_RELEASE req:  [requestId:int32][nameLen:u8][name:bytes][lockedByLen:u8][lockedBy:bytes]
-LOCK_UPDATE  req:  [requestId:int32][nameLen:u8][name:bytes][lockUntilMs:int64][lockedByLen:u8][lockedBy:bytes]
-LOCK_GET     req:  [requestId:int32][nameLen:u8][name:bytes]
-LOCK_DELETE  req:  [requestId:int32][nameLen:u8][name:bytes]
+### Система распределённых блокировок (ShedLock)
 
-LOCK resp (acquire/update/release): [status:u8][requestId:int32][lockUntilMs:int64][lockedAtMs:int64]
-LOCK resp (get):                    [status:u8][requestId:int32][lockUntilMs:int64][lockedAtMs:int64][lockedByLen:u8][lockedBy:bytes]
-LOCK resp (simple, delete):         [status:u8][requestId:int32]
+Сервис предоставляет полноценную систему распределённых блокировок с семантикой, аналогичной [ShedLock](https://github.com/lukas-krecan/ShedLock). Это позволяет координировать выполнение задач в кластере, гарантируя, что конкретная задача выполняется только одним узлом одновременно.
 
-Статусы: ST_OK=5 — применено; ST_LOCK_HELD=10 — держится другим;
-ST_NOT_FOUND=4 — нет записи; ST_BAD_REQUEST=6; ST_UNAVAILABLE=3
+#### Схема хранения блокировок
 
+```sql
+CREATE TABLE shedlock(
+  name VARCHAR(64) NOT NULL,
+  lock_until TIMESTAMP NOT NULL,
+  locked_at TIMESTAMP NOT NULL,
+  locked_by VARCHAR(255) NOT NULL,
+  PRIMARY KEY (name)
+);
+```
+
+#### Операции с блокировками
+
+| Операция | Описание | Условие успеха |
+|----------|----------|----------------|
+| **Acquire** (Захват) | Захват блокировки для выполнения задачи | Блокировка не существует **ИЛИ** блокировка истекла (`lock_until <= now`) |
+| **Update** (Продление) | Продление времени удержания блокировки | Вызов является владельцем (`locked_by`) **ИЛИ** блокировка истекла |
+| **Release** (Освобождение) | Освобождение блокировки после завершения задачи | Вызов является владельцем (`locked_by`) **ИЛИ** блокировка истекла (принудительное освобождение) |
+| **Get** (Получение) | Чтение информации о блокировке по имени | Всегда выполняется (возвращает `null` если блокировка не найдена) |
+| **Delete** (Удаление) | Административное удаление блокировки без проверки владельца | Всегда выполняется (аналог `DELETE FROM shedlock WHERE name = ?`) |
+
+**Дополнительные возможности:**
+
+- **Автоматическая очистка** — периодическая очистка истёкших блокировок (каждые 10 минут по умолчанию)
+- **Синхронная репликация** — блокировки реплицируются между узлами кластера с настраиваемым кворумом подтверждений
+- **Координация через лидера** — операции записи маршрутизируются через лидера кластера
+- **Стратегия разрешения конфликтов** — Last-Writer-Wins по метке времени `lockedAtMs`
+
+#### REST API для мониторинга блокировок
+Эндпоинт /v1/locks предоставляет возможность просматривать состояние реестра блокировок.
+* Получение всех блокировок: ```curl http://localhost:8083/v1/locks```
+* Поиск блокировок по имени (аналог LIKE '%value%'): ```curl "http://localhost:8083/v1/locks?name=scheduler"```
+* Получение в формате JSON: ```curl -H "Accept: application/json" http://localhost:8083/v1/locks```

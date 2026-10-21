@@ -42,7 +42,7 @@ public final class LockRegistry {
   public LockResult acquire(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
     LockEntry candidate = new LockEntry(name, lockUntilMs, now, lockedBy);
-    // TODO заменить бесконечный цикл
+    // TODO заменить бесконечный цикл ?
     for (; ; ) {
       LockEntry cur = locks.putIfAbsent(name, candidate);
       if (cur == null) {
@@ -66,7 +66,7 @@ public final class LockRegistry {
    */
   public LockResult update(String name, long lockUntilMs, String lockedBy) {
     long now = clock.getAsLong();
-    // TODO заменить бесконечный цикл
+    // TODO заменить бесконечный цикл ?
     for (; ; ) {
       LockEntry cur = locks.get(name);
       if (cur == null) {
@@ -91,7 +91,7 @@ public final class LockRegistry {
    */
   public LockResult release(String name, String lockedBy) {
     long now = clock.getAsLong();
-    // TODO заменить бесконечный цикл
+    // TODO заменить бесконечный цикл ?
     for (; ; ) {
         LockEntry cur = locks.get(name);
         if (cur == null) {
@@ -125,6 +125,7 @@ public final class LockRegistry {
    * Применение реплики от другого узла кластера (без re-broadcast).
    */
   public void applyRemote(LockEntry entry) {
+    // TODO заменить бесконечный цикл ?
     for (; ; ) {
       LockEntry cur = locks.get(entry.name());
       if (cur == null) {
