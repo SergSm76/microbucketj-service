@@ -94,15 +94,34 @@ class LockRegistryTest {
 
   @Test
   void cleanupExpired_removesOnlyExpired() {
-    AtomicLong clock = new AtomicLong(1_000_000L);
+    // Текущее время
+    long now = 10_000_000L;
+    // 1 час в миллисекундах
+    long oneHour = 3_600_000L;
+    // Граница: удаляются только те, у которых lockUntilMs <= threshold
+    long threshold = now - oneHour; // 6_400_000L
+
+    AtomicLong clock = new AtomicLong(now);
     LockRegistry r = new LockRegistry(clock::get);
-    r.acquire("live",   2_000_000L, "node-A");
-    r.acquire("dying",  1_500_000L, "node-A");
-    clock.set(1_600_000L);
+
+    // Блокировка, которая ещё не истекла (остаётся)
+    r.acquire("live", now + 1_000_000L, "node-A");
+    // Блокировка, которая истекла, но меньше часа назад (остаётся)
+    r.acquire("expired_recently", now - 1_000_000L, "node-A"); // истекла ~16 минут назад
+    // Блокировка, которая истекла ровно час назад (удаляется)
+    r.acquire("expired_exactly_1h", threshold, "node-A"); // истекла ровно 1 час назад
+    // Блокировка, которая истекла более часа назад (удаляется)
+    r.acquire("expired_long_ago", now - 5_000_000L, "node-A"); // истекла ~83 минуты назад
+
     int removed = r.cleanupExpired();
-    assertEquals(1, removed);
-    assertNotNull(r.get("live"));
-    assertNull(r.get("dying"));
+
+    // Должны быть удалены только 2 блокировки
+    assertEquals(2, removed);
+    // Проверяем, что остались только правильные блокировки
+    assertNotNull(r.get("live"), "Блокировка 'live' должна остаться (ещё не истекла)");
+    assertNotNull(r.get("expired_recently"), "Блокировка 'expired_recently' должна остаться (истекла < 1 часа назад)");
+    assertNull(r.get("expired_exactly_1h"), "Блокировка 'expired_exactly_1h' должна быть удалена (истекла ровно 1 час назад)");
+    assertNull(r.get("expired_long_ago"), "Блокировка 'expired_long_ago' должна быть удалена (истекла > 1 часа назад)");
   }
 
   @Test

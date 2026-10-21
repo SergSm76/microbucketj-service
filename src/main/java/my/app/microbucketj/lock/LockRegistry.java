@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 
 /**
@@ -18,6 +19,14 @@ import java.util.function.LongSupplier;
 public final class LockRegistry {
 
   private static final Logger LOG = LoggerFactory.getLogger(LockRegistry.class);
+
+  /**
+   * Период ожидания перед удалением истёкшей блокировки.
+   * Блокировка будет удалена только если её lockUntilMs истёк
+   * более или равно CLEANUP_GRACE_PERIOD_MS назад относительно текущего времени.
+   * Это оставляет "буфер" для возможного продления или диагностики.
+   */
+  private static final long CLEANUP_GRACE_PERIOD_MS = TimeUnit.HOURS.toMillis(1);
 
   /**
    * applied=true — операция применена локально (нужна репликация/ответ OK).
@@ -93,20 +102,20 @@ public final class LockRegistry {
     long now = clock.getAsLong();
     // TODO заменить бесконечный цикл ?
     for (; ; ) {
-        LockEntry cur = locks.get(name);
-        if (cur == null) {
-            LOG.debug("Попытка освободить несуществующую блокировку: {}", name);
-            return new LockResult(false, null);
-        }
-        if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
-            LOG.debug("Отказ в освобождении блокировки {}: владелец={}, запрошен={}",
-                      name, cur.lockedBy(), lockedBy);
-            return new LockResult(false, cur);
-        }
-        if (locks.remove(name, cur)) {
-            LOG.debug("Блокировка {} успешно освобождена владельцем {}", name, lockedBy);
-            return new LockResult(true, cur);
-        }
+      LockEntry cur = locks.get(name);
+      if (cur == null) {
+        LOG.debug("Попытка освободить несуществующую блокировку: {}", name);
+        return new LockResult(false, null);
+      }
+      if (!cur.isOwnedBy(lockedBy) && !cur.isExpired(now)) {
+        LOG.debug("Отказ в освобождении блокировки {}: владелец={}, запрошен={}",
+            name, cur.lockedBy(), lockedBy);
+        return new LockResult(false, cur);
+      }
+      if (locks.remove(name, cur)) {
+        LOG.debug("Блокировка {} успешно освобождена владельцем {}", name, lockedBy);
+        return new LockResult(true, cur);
+      }
     }
   }
 
@@ -143,20 +152,28 @@ public final class LockRegistry {
   }
 
   /**
-   * Периодическая очистка истёкших записей (аналог not-used-reset у бакетов).
+   * Периодическая очистка истёкших записей.
+   * Удаляет блокировки, у которых срок окончания действия (lock_until)
+   * истёк более или равным час назад относительно текущего времени.
+   * <p>
+   * Условие удаления: lockUntilMs &lt;= (now - CLEANUP_GRACE_PERIOD_MS)
    */
   public int cleanupExpired() {
     LOG.debug("Запуск поиска истекших блокировок для очистки");
     long now = clock.getAsLong();
+    long threshold = now - CLEANUP_GRACE_PERIOD_MS;
     int removed = 0;
     for (var it = locks.entrySet().iterator(); it.hasNext(); ) {
       var e = it.next();
-      if (e.getValue().isExpired(now)) {
+      // удаляем блокировку только если её срок истёк >= CLEANUP_GRACE_PERIOD_MS назад
+      if (e.getValue().lockUntilMs() <= threshold) {
         it.remove();
         removed++;
       }
     }
-    if (removed > 0) LOG.info("Очистка истёкших блокировок: removed={}", removed);
+    if (removed > 0) {
+      LOG.info("Очистка истёкших блокировок: removed={}, threshold={}", removed, threshold);
+    }
     return removed;
   }
 
